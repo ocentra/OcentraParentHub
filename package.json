@@ -1,0 +1,24 @@
+{
+  "name": "@ocentra/parent-hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "laser": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run src",
+    "laser": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "effect": "^3.11.10"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.8"
+  }
+}
