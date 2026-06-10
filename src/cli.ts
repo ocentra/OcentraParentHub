@@ -6,13 +6,17 @@ import {
   parseEventId,
   parseLaneId,
   parseMessageAddress,
+  parsePullRequestUrl,
   parseStatusState,
+  parseTaskId,
+  parseTaskState,
   parseUserText,
+  parseWorkerState,
   parseWriterId,
 } from "./domain.js";
 import { inspectLedger } from "./doctor.js";
 import { initIdentity, loadIdentity, resolveLane } from "./identity.js";
-import { materialize, materializedToJson } from "./materialize.js";
+import { getActiveTasks, getFreeWorkers, getWorkers, materialize, materializedToJson } from "./materialize.js";
 import { streamsDir } from "./paths.js";
 import { compactLedger } from "./retention.js";
 import { startPeerServer } from "./server.js";
@@ -63,6 +67,21 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "status":
       await commandStatus(rest);
+      return;
+    case "task":
+      await commandTask(rest);
+      return;
+    case "worker":
+      await commandWorker(rest);
+      return;
+    case "report":
+      await commandReport(rest);
+      return;
+    case "workers":
+      await commandWorkers(rest);
+      return;
+    case "tasks":
+      await commandTasks(rest);
       return;
     case "materialize":
       print(materializedToJson(await materialize(root)));
@@ -241,6 +260,67 @@ async function commandStatus(argv: string[]): Promise<void> {
   }));
 }
 
+async function commandTask(argv: string[]): Promise<void> {
+  const [laneRaw, taskIdRaw, stateRaw, ...summaryParts] = argv;
+  if (laneRaw === undefined || taskIdRaw === undefined || stateRaw === undefined || summaryParts.length === 0) {
+    throw new Error("usage: ledger task <lane> <taskId> <state> <summary> [--title <title>] [--pr-url <url>]");
+  }
+  const config = await loadIdentity(root);
+  const title = optionValue(argv, "--title");
+  const prUrl = optionValue(argv, "--pr-url");
+  const state = parseTaskState(stateRaw);
+  print(await appendEvent(root, config, parseLaneId(laneRaw), {
+    type: "task.update",
+    taskId: parseTaskId(taskIdRaw),
+    taskState: state,
+    summary: parseUserText(summaryWithoutOptions(summaryParts)),
+    ...(title === undefined ? {} : { title: parseUserText(title) }),
+    ...(prUrl === undefined ? {} : { prUrl: parsePullRequestUrl(prUrl) }),
+  }));
+}
+
+async function commandWorker(argv: string[]): Promise<void> {
+  const [laneRaw, stateRaw, ...summaryParts] = argv;
+  if (laneRaw === undefined || stateRaw === undefined || summaryParts.length === 0) {
+    throw new Error("usage: ledger worker <lane> <state> <summary> [--task-id <taskId>]");
+  }
+  const config = await loadIdentity(root);
+  const taskIdRaw = optionValue(argv, "--task-id");
+  print(await appendEvent(root, config, parseLaneId(laneRaw), {
+    type: "worker.update",
+    workerState: parseWorkerState(stateRaw),
+    summary: parseUserText(summaryWithoutOptions(summaryParts)),
+    ...(taskIdRaw === undefined ? {} : { taskId: parseTaskId(taskIdRaw) }),
+  }));
+}
+
+async function commandReport(argv: string[]): Promise<void> {
+  const taskIdRaw = optionValue(argv, "--task-id");
+  const summaryParts = argv.filter((arg, index) => {
+    const previous = argv[index - 1];
+    return !arg.startsWith("--") && previous !== "--task-id";
+  });
+  if (summaryParts.length === 0) {
+    throw new Error("usage: ledger report [--task-id <taskId>] <summary>");
+  }
+  const config = await loadIdentity(root);
+  print(await appendEvent(root, config, config.defaultLane, {
+    type: "report",
+    summary: parseUserText(summaryParts.join(" ")),
+    ...(taskIdRaw === undefined ? {} : { taskId: parseTaskId(taskIdRaw) }),
+  }));
+}
+
+async function commandWorkers(argv: string[]): Promise<void> {
+  const state = await materialize(root);
+  print(argv[0] === "free" ? getFreeWorkers(state) : getWorkers(state));
+}
+
+async function commandTasks(argv: string[]): Promise<void> {
+  const state = await materialize(root);
+  print(argv[0] === "active" ? getActiveTasks(state) : [...state.tasks.values()]);
+}
+
 async function commandDoctor(): Promise<void> {
   const state = await materialize(root);
   const inspection = await inspectLedger(root);
@@ -293,6 +373,21 @@ function optionValue(argv: readonly string[], option: string): string | undefine
   const index = argv.indexOf(option);
   const value = index >= 0 ? argv[index + 1] : undefined;
   return value === undefined || value.startsWith("--") ? undefined : value;
+}
+
+function summaryWithoutOptions(parts: readonly string[]): string {
+  const summary: string[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part === "--title" || part === "--pr-url" || part === "--task-id") {
+      index += 1;
+      continue;
+    }
+    if (part !== undefined) {
+      summary.push(part);
+    }
+  }
+  return summary.join(" ");
 }
 
 function print(value: unknown): void {

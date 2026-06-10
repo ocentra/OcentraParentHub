@@ -85,6 +85,45 @@ export const UserTextSchema = Schema.String.pipe(
 );
 export type UserText = Schema.Schema.Type<typeof UserTextSchema>;
 
+export const TaskIdSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(120),
+  Schema.pattern(identityPattern),
+  Schema.brand("TaskId"),
+);
+export type TaskId = Schema.Schema.Type<typeof TaskIdSchema>;
+
+export const PullRequestUrlSchema = Schema.String.pipe(
+  Schema.minLength(8),
+  Schema.maxLength(500),
+  Schema.pattern(/^https?:\/\/.+/),
+  Schema.brand("PullRequestUrl"),
+);
+export type PullRequestUrl = Schema.Schema.Type<typeof PullRequestUrlSchema>;
+
+export const WorkerStateSchema = Schema.Literal(
+  "idle",
+  "started",
+  "progress",
+  "working",
+  "blocked",
+  "pr_ready",
+  "done",
+  "offline",
+).pipe(Schema.brand("WorkerState"));
+export type WorkerState = Schema.Schema.Type<typeof WorkerStateSchema>;
+
+export const TaskStateSchema = Schema.Literal(
+  "queued",
+  "started",
+  "progress",
+  "blocked",
+  "pr_ready",
+  "done",
+  "cancelled",
+).pipe(Schema.brand("TaskState"));
+export type TaskState = Schema.Schema.Type<typeof TaskStateSchema>;
+
 export const StatusStateSchema = Schema.Literal(
   "idle",
   "working",
@@ -105,6 +144,9 @@ export const EventTypeSchema = Schema.Literal(
   "claim.resolve",
   "status",
   "heartbeat",
+  "worker.update",
+  "task.update",
+  "report",
   "handoff",
   "note",
 ).pipe(Schema.brand("EventType"));
@@ -130,6 +172,10 @@ export const parseIsoTimestamp = Schema.decodeUnknownSync(IsoTimestampSchema);
 export const parseClaimPath = Schema.decodeUnknownSync(ClaimPathSchema);
 export const parseMessageAddress = Schema.decodeUnknownSync(MessageAddressSchema);
 export const parseUserText = Schema.decodeUnknownSync(UserTextSchema);
+export const parseTaskId = Schema.decodeUnknownSync(TaskIdSchema);
+export const parsePullRequestUrl = Schema.decodeUnknownSync(PullRequestUrlSchema);
+export const parseWorkerState = Schema.decodeUnknownSync(WorkerStateSchema);
+export const parseTaskState = Schema.decodeUnknownSync(TaskStateSchema);
 export const parseStatusState = Schema.decodeUnknownSync(StatusStateSchema);
 export const parseEventType = Schema.decodeUnknownSync(EventTypeSchema);
 export const parseHubConfig = Schema.decodeUnknownSync(HubConfigSchema);

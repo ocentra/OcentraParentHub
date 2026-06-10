@@ -1,6 +1,19 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ClaimPath, LaneId, NodeId, NodeName, WriterId, parseLaneId, writerId } from "./domain.js";
+import {
+  ClaimPath,
+  LaneId,
+  NodeId,
+  NodeName,
+  PullRequestUrl,
+  TaskId,
+  TaskState,
+  WorkerState,
+  WriterId,
+  parseLaneId,
+  parseWorkerState,
+  writerId,
+} from "./domain.js";
 import { assertEventHash, HubEvent } from "./events.js";
 import { laneViewsDir, viewsDir } from "./paths.js";
 import { readAllStreams } from "./stream.js";
@@ -9,6 +22,8 @@ export type MaterializedHub = {
   readonly dashboard: DashboardView;
   readonly ownership: OwnershipView;
   readonly lanes: ReadonlyMap<LaneId, LaneView>;
+  readonly workers: ReadonlyMap<WriterId, WorkerView>;
+  readonly tasks: ReadonlyMap<TaskId, TaskView>;
   readonly warnings: readonly string[];
 };
 
@@ -16,6 +31,10 @@ export type MaterializedHubJson = {
   readonly dashboard: DashboardView;
   readonly ownership: OwnershipView;
   readonly lanes: Record<string, LaneView>;
+  readonly workers: Record<string, WorkerView>;
+  readonly freeWorkers: readonly WorkerView[];
+  readonly activeTasks: readonly TaskView[];
+  readonly tasks: Record<string, TaskView>;
   readonly warnings: readonly string[];
 };
 
@@ -25,6 +44,9 @@ export type DashboardView = {
   readonly laneCount: number;
   readonly inboxCount: number;
   readonly staleHeartbeatCount: number;
+  readonly workerCount: number;
+  readonly freeWorkerCount: number;
+  readonly activeTaskCount: number;
   readonly conflictCount: number;
   readonly generatedAt: string;
 };
@@ -69,6 +91,34 @@ export type HeartbeatView = {
   readonly stale: boolean;
 };
 
+export type WorkerView = {
+  readonly writer: WriterId;
+  readonly nodeId: NodeId;
+  readonly nodeName: NodeName;
+  readonly lane: LaneId;
+  readonly state: WorkerState;
+  readonly summary?: string;
+  readonly currentTaskId?: TaskId;
+  readonly lastSeenAt: string;
+  readonly heartbeat?: HeartbeatView;
+  readonly status?: StatusView;
+  readonly activeClaims: readonly ClaimView[];
+  readonly free: boolean;
+};
+
+export type TaskView = {
+  readonly taskId: TaskId;
+  readonly lane: LaneId;
+  readonly writer: WriterId;
+  readonly state: TaskState;
+  readonly title?: string;
+  readonly summary: string;
+  readonly prUrl?: PullRequestUrl;
+  readonly updatedAt: string;
+  readonly eventId: string;
+  readonly active: boolean;
+};
+
 export type ClaimView = {
   readonly writer: WriterId;
   readonly lane: LaneId;
@@ -92,6 +142,8 @@ export async function materialize(root: string): Promise<MaterializedHub> {
 
   const lanes = new Map<LaneId, MutableLaneView>();
   const writers = new Map<WriterId, WriterDirectoryEntry>();
+  const workers = new Map<WriterId, MutableWorkerView>();
+  const tasks = new Map<TaskId, TaskView>();
   const acks = new Map<string, Set<WriterId>>();
   const activeClaims = new Map<string, ClaimView>();
 
@@ -103,8 +155,12 @@ export async function materialize(root: string): Promise<MaterializedHub> {
       nodeName: event.nodeName,
       lane: event.lane,
     });
+    const worker = ensureWorker(workers, event);
+    worker.lastSeenAt = event.ts;
     if (event.type === "lane.register") {
       lane.registeredWriters.add(event.writer);
+      worker.state = parseWorkerState("idle");
+      worker.summary = "registered";
     }
     if (event.type === "message" || event.type === "handoff") {
       const item: InboxItem = {
@@ -132,6 +188,8 @@ export async function materialize(root: string): Promise<MaterializedHub> {
         writer: event.writer,
         ts: event.ts,
       };
+      worker.status = lane.status;
+      worker.summary = event.summary;
     }
     if (event.type === "heartbeat" && event.state !== undefined && event.summary !== undefined) {
       const ttlSeconds = event.ttlSeconds ?? 180;
@@ -145,6 +203,48 @@ export async function materialize(root: string): Promise<MaterializedHub> {
         expiresAt,
         stale: Date.parse(expiresAt) < Date.now(),
       };
+      worker.heartbeat = lane.heartbeat;
+      if (!lane.heartbeat.stale && worker.state === "offline") {
+        worker.state = parseWorkerState("idle");
+      }
+      worker.summary = event.summary;
+    }
+    if (event.type === "worker.update" && event.workerState !== undefined && event.summary !== undefined) {
+      worker.state = event.workerState;
+      worker.summary = event.summary;
+      if (event.taskId === undefined) {
+        delete worker.currentTaskId;
+      } else {
+        worker.currentTaskId = event.taskId;
+      }
+    }
+    if (event.type === "task.update" && event.taskId !== undefined && event.taskState !== undefined && event.summary !== undefined) {
+      const task: TaskView = {
+        taskId: event.taskId,
+        lane: event.lane,
+        writer: event.writer,
+        state: event.taskState,
+        summary: event.summary,
+        updatedAt: event.ts,
+        eventId: event.id,
+        active: isTaskActive(event.taskState),
+        ...(event.title === undefined ? {} : { title: event.title }),
+        ...(event.prUrl === undefined ? {} : { prUrl: event.prUrl }),
+      };
+      tasks.set(event.taskId, task);
+      if (task.active) {
+        worker.currentTaskId = event.taskId;
+      } else {
+        delete worker.currentTaskId;
+      }
+      worker.state = workerStateFromTaskState(event.taskState);
+      worker.summary = event.summary;
+    }
+    if (event.type === "report" && event.summary !== undefined) {
+      worker.summary = event.summary;
+      if (event.taskId !== undefined) {
+        worker.currentTaskId = event.taskId;
+      }
     }
     if (event.type === "claim" && event.paths !== undefined) {
       for (const path of event.paths) {
@@ -156,6 +256,9 @@ export async function materialize(root: string): Promise<MaterializedHub> {
           ...(event.reason === undefined ? {} : { reason: event.reason }),
         };
         activeClaims.set(claimKey(event.writer, path), claim);
+      }
+      if (event.reason !== undefined) {
+        worker.summary = event.reason;
       }
     }
     if (event.type === "release" && event.paths !== undefined) {
@@ -187,17 +290,23 @@ export async function materialize(root: string): Promise<MaterializedHub> {
     conflicts: detectConflicts([...activeClaims.values()]),
   };
   const frozenLanes = freezeLanes(lanes);
+  const frozenWorkers = freezeWorkers(workers, ownership.activeClaims, tasks);
+  const freeWorkers = [...frozenWorkers.values()].filter((worker) => worker.free);
+  const activeTasks = [...tasks.values()].filter((task) => task.active);
   const dashboard = {
     eventCount: events.length,
     duplicateCount,
     laneCount: frozenLanes.size,
     inboxCount: [...frozenLanes.values()].reduce((count, lane) => count + lane.inbox.length, 0),
     staleHeartbeatCount: [...frozenLanes.values()].filter((lane) => lane.heartbeat?.stale === true).length,
+    workerCount: frozenWorkers.size,
+    freeWorkerCount: freeWorkers.length,
+    activeTaskCount: activeTasks.length,
     conflictCount: ownership.conflicts.length,
     generatedAt: new Date().toISOString(),
   };
 
-  const result = { dashboard, ownership, lanes: frozenLanes, warnings };
+  const result = { dashboard, ownership, lanes: frozenLanes, workers: frozenWorkers, tasks, warnings };
   await writeViews(root, result);
   return result;
 }
@@ -207,8 +316,24 @@ export function materializedToJson(state: MaterializedHub): MaterializedHubJson 
     dashboard: state.dashboard,
     ownership: state.ownership,
     lanes: Object.fromEntries(state.lanes.entries()),
+    workers: Object.fromEntries(state.workers.entries()),
+    freeWorkers: getFreeWorkers(state),
+    activeTasks: getActiveTasks(state),
+    tasks: Object.fromEntries(state.tasks.entries()),
     warnings: state.warnings,
   };
+}
+
+export function getWorkers(state: MaterializedHub): readonly WorkerView[] {
+  return [...state.workers.values()];
+}
+
+export function getFreeWorkers(state: MaterializedHub): readonly WorkerView[] {
+  return getWorkers(state).filter((worker) => worker.free);
+}
+
+export function getActiveTasks(state: MaterializedHub): readonly TaskView[] {
+  return [...state.tasks.values()].filter((task) => task.active);
 }
 
 function ensureLane(lanes: Map<LaneId, MutableLaneView>, lane: LaneId): MutableLaneView {
@@ -242,6 +367,36 @@ type WriterDirectoryEntry = {
   readonly lane: LaneId;
 };
 
+type MutableWorkerView = {
+  readonly writer: WriterId;
+  readonly nodeId: NodeId;
+  readonly nodeName: NodeName;
+  readonly lane: LaneId;
+  state: WorkerState;
+  summary?: string;
+  currentTaskId?: TaskId;
+  lastSeenAt: string;
+  heartbeat?: HeartbeatView;
+  status?: StatusView;
+};
+
+function ensureWorker(workers: Map<WriterId, MutableWorkerView>, event: HubEvent): MutableWorkerView {
+  const existing = workers.get(event.writer);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const worker: MutableWorkerView = {
+    writer: event.writer,
+    nodeId: event.nodeId,
+    nodeName: event.nodeName,
+    lane: event.lane,
+    state: parseWorkerState("idle"),
+    lastSeenAt: event.ts,
+  };
+  workers.set(event.writer, worker);
+  return worker;
+}
+
 function freezeLanes(lanes: ReadonlyMap<LaneId, MutableLaneView>): ReadonlyMap<LaneId, LaneView> {
   return new Map(
     [...lanes.entries()].map(([laneId, lane]) => [
@@ -256,6 +411,65 @@ function freezeLanes(lanes: ReadonlyMap<LaneId, MutableLaneView>): ReadonlyMap<L
       },
     ]),
   );
+}
+
+function freezeWorkers(
+  workers: ReadonlyMap<WriterId, MutableWorkerView>,
+  activeClaims: readonly ClaimView[],
+  tasks: ReadonlyMap<TaskId, TaskView>,
+): ReadonlyMap<WriterId, WorkerView> {
+  return new Map(
+    [...workers.entries()].map(([writer, worker]) => {
+      const claims = activeClaims.filter((claim) => claim.writer === writer);
+      const currentTask = worker.currentTaskId === undefined ? undefined : tasks.get(worker.currentTaskId);
+      const heartbeatStale = worker.heartbeat?.stale === true;
+      const free = !heartbeatStale
+        && claims.length === 0
+        && (currentTask === undefined || !currentTask.active)
+        && (worker.state === "idle" || worker.state === "done");
+      return [
+        writer,
+        {
+          writer: worker.writer,
+          nodeId: worker.nodeId,
+          nodeName: worker.nodeName,
+          lane: worker.lane,
+          state: heartbeatStale ? parseWorkerState("offline") : worker.state,
+          lastSeenAt: worker.lastSeenAt,
+          activeClaims: claims,
+          free,
+          ...(worker.summary === undefined ? {} : { summary: worker.summary }),
+          ...(worker.currentTaskId === undefined ? {} : { currentTaskId: worker.currentTaskId }),
+          ...(worker.heartbeat === undefined ? {} : { heartbeat: worker.heartbeat }),
+          ...(worker.status === undefined ? {} : { status: worker.status }),
+        },
+      ];
+    }),
+  );
+}
+
+function isTaskActive(state: TaskState): boolean {
+  return state !== "done" && state !== "cancelled";
+}
+
+function workerStateFromTaskState(state: TaskState): WorkerState {
+  switch (state) {
+    case "queued":
+      return parseWorkerState("idle");
+    case "started":
+      return parseWorkerState("started");
+    case "progress":
+      return parseWorkerState("progress");
+    case "blocked":
+      return parseWorkerState("blocked");
+    case "pr_ready":
+      return parseWorkerState("pr_ready");
+    case "done":
+    case "cancelled":
+      return parseWorkerState("done");
+    default:
+      return parseWorkerState("idle");
+  }
 }
 
 function claimKey(writer: WriterId, path: ClaimPath): string {
@@ -343,6 +557,9 @@ async function writeViews(root: string, state: MaterializedHub): Promise<void> {
   await mkdir(viewsDir(root), { recursive: true });
   await writeFile(join(viewsDir(root), "dashboard.json"), `${JSON.stringify(state.dashboard, null, 2)}\n`);
   await writeFile(join(viewsDir(root), "ownership.json"), `${JSON.stringify(state.ownership, null, 2)}\n`);
+  await writeFile(join(viewsDir(root), "workers.json"), `${JSON.stringify(getWorkers(state), null, 2)}\n`);
+  await writeFile(join(viewsDir(root), "free-workers.json"), `${JSON.stringify(getFreeWorkers(state), null, 2)}\n`);
+  await writeFile(join(viewsDir(root), "active-tasks.json"), `${JSON.stringify(getActiveTasks(state), null, 2)}\n`);
   for (const lane of state.lanes.values()) {
     const laneDir = laneViewsDir(root, parseLaneId(lane.lane));
     await mkdir(laneDir, { recursive: true });

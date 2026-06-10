@@ -6,8 +6,12 @@ import {
   HubConfig,
   LaneId,
   MessageAddress,
+  PullRequestUrl,
   StatusState,
+  TaskId,
+  TaskState,
   UserText,
+  WorkerState,
   WriterId,
   nowIso,
   parseEventType,
@@ -156,6 +160,16 @@ export type EventCommand =
   | { type: "claim.resolve"; paths: ClaimPath[]; owner?: WriterId }
   | { type: "status"; state: StatusState; summary: UserText }
   | { type: "heartbeat"; state: StatusState; summary: UserText; ttlSeconds: number }
+  | { type: "worker.update"; workerState: WorkerState; summary: UserText; taskId?: TaskId }
+  | {
+    type: "task.update";
+    taskId: TaskId;
+    taskState: TaskState;
+    title?: UserText;
+    summary: UserText;
+    prUrl?: PullRequestUrl;
+  }
+  | { type: "report"; taskId?: TaskId; summary: UserText }
   | { type: "handoff"; to: MessageAddress; body: UserText }
   | { type: "note"; body: UserText };
 
@@ -228,6 +242,28 @@ function eventInput(config: HubConfig, lane: LaneId, command: EventCommand): New
         state: command.state,
         summary: command.summary,
         ttlSeconds: command.ttlSeconds,
+      };
+    case "worker.update":
+      return {
+        ...base,
+        workerState: command.workerState,
+        summary: command.summary,
+        ...(command.taskId === undefined ? {} : { taskId: command.taskId }),
+      };
+    case "task.update":
+      return {
+        ...base,
+        taskId: command.taskId,
+        taskState: command.taskState,
+        summary: command.summary,
+        ...(command.title === undefined ? {} : { title: command.title }),
+        ...(command.prUrl === undefined ? {} : { prUrl: command.prUrl }),
+      };
+    case "report":
+      return {
+        ...base,
+        summary: command.summary,
+        ...(command.taskId === undefined ? {} : { taskId: command.taskId }),
       };
     case "handoff":
       return { ...base, to: command.to, body: command.body };

@@ -58,6 +58,13 @@ npm run ledger -- claim codex-b "src/auth/**" --reason "auth cleanup"
 npm run ledger -- release codex-b "src/auth/**"
 npm run ledger -- resolve codex-b "src/auth/**" --owner node_abc.codex-b
 npm run ledger -- status codex-b working "reviewing package preview gate"
+npm run ledger -- worker codex-b progress "implemented route checks" --task-id task-preview-gate
+npm run ledger -- task codex-b task-preview-gate started "starting preview gate"
+npm run ledger -- task codex-b task-preview-gate progress "tests passing"
+npm run ledger -- task codex-b task-preview-gate pr_ready "PR ready" --pr-url https://github.com/ocentra/OcentraParent/pull/123
+npm run ledger -- workers
+npm run ledger -- workers free
+npm run ledger -- tasks active
 npm run ledger -- handoff codex-b "ready for next slice"
 npm run ledger -- note "raw operator note"
 npm run ledger -- materialize
@@ -76,6 +83,9 @@ npm run ledger -- sync --peer http://127.0.0.1:8787
 - **Ownership:** `claim`, `release`, and `claim.resolve` events drive ownership. Overlapping active claim paths become conflicts until released or resolved.
 - **Status:** `status` events carry low-frequency lane state. V1 intentionally avoids replacing Codex internal heartbeat.
 - **Heartbeat/startup:** `start` writes `lane.register` and `heartbeat`, materializes views, and returns unread inbox for that lane.
+- **Workers:** `worker.update` events use typed states: `idle`, `started`, `progress`, `working`, `blocked`, `pr_ready`, `done`, `offline`.
+- **Tasks:** `task.update` events use typed states: `queued`, `started`, `progress`, `blocked`, `pr_ready`, `done`, `cancelled`.
+- **Boss queries:** materialization produces `workers`, `freeWorkers`, and `activeTasks` views so the boss can ask who is free and what is still open.
 - **Doctor:** `doctor` validates stream hashes, sequence continuity, malformed lines, materialized warnings, and ownership conflicts.
 
 ## Retention And Compaction
@@ -126,10 +136,16 @@ GET /manifest
 GET /streams
 GET /streams/:name
 GET /inbox/:lane
+GET /workers
+GET /workers/free
+GET /tasks/active
 POST /commands/message
 POST /commands/start
 POST /commands/ack
 POST /commands/status
+POST /commands/worker
+POST /commands/task
+POST /commands/report
 POST /commands/claim
 POST /commands/release
 POST /commands/resolve
@@ -158,6 +174,24 @@ Invoke-RestMethod `
   -Body '{"lane":"codex-b","ttlSeconds":180}'
 ```
 
+Worker task lifecycle:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8787/commands/task `
+  -ContentType 'application/json' `
+  -Body '{"lane":"codex-b","taskId":"task-preview-gate","state":"progress","summary":"tests passing"}'
+```
+
+Boss worker queries:
+
+```powershell
+Invoke-RestMethod -Uri http://127.0.0.1:8787/workers
+Invoke-RestMethod -Uri http://127.0.0.1:8787/workers/free
+Invoke-RestMethod -Uri http://127.0.0.1:8787/tasks/active
+```
+
 ## Migration Stance
 
 Do not wire this project into `E:\OcentraParent` yet. The existing product-repo hub should continue operating until a later migration explicitly chooses a cutover path.
@@ -182,6 +216,7 @@ The V1 scaffold covers:
 - same-stream divergence conflict copies
 - HTTP peer sync
 - HTTP command API for message/start/ack/status/ownership commands
+- typed worker/task lifecycle events and boss query views
 - hash-chain tamper detection
 - cold stream compaction into immutable archive segments
 - startup heartbeat and unread inbox check

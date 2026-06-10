@@ -6,12 +6,16 @@ import {
   parseEventId,
   parseLaneId,
   parseMessageAddress,
+  parsePullRequestUrl,
   parseStatusState,
+  parseTaskId,
+  parseTaskState,
   parseUserText,
+  parseWorkerState,
   parseWriterId,
 } from "./domain.js";
 import { loadIdentity, resolveLane } from "./identity.js";
-import { materialize } from "./materialize.js";
+import { getActiveTasks, getFreeWorkers, getWorkers, materialize } from "./materialize.js";
 import { streamsDir } from "./paths.js";
 import { appendEvent } from "./stream.js";
 import { streamFiles } from "./sync/local.js";
@@ -110,6 +114,18 @@ async function routeRequest(
     sendJson(response, 200, { inbox: all ? inbox : inbox.filter((item) => item.ackedBy.length === 0) });
     return;
   }
+  if (request.method === "GET" && url.pathname === "/workers") {
+    sendJson(response, 200, { workers: getWorkers(await materialize(root)) });
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/workers/free") {
+    sendJson(response, 200, { workers: getFreeWorkers(await materialize(root)) });
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/tasks/active") {
+    sendJson(response, 200, { tasks: getActiveTasks(await materialize(root)) });
+    return;
+  }
   if (request.method === "POST" && url.pathname.startsWith("/commands/")) {
     await routeCommand(root, request, response, url.pathname.slice("/commands/".length));
     return;
@@ -173,6 +189,41 @@ async function routeCommand(
       type: "status",
       state: parseStatusState(requiredString(body, "state")),
       summary: parseUserText(requiredString(body, "summary")),
+    });
+    sendJson(response, 200, { event });
+    return;
+  }
+  if (command === "worker") {
+    const lane = resolveLane(config, optionalString(body, "lane"));
+    const event = await appendEvent(root, config, lane, {
+      type: "worker.update",
+      workerState: parseWorkerState(requiredString(body, "state")),
+      summary: parseUserText(requiredString(body, "summary")),
+      ...(optionalString(body, "taskId") === undefined ? {} : { taskId: parseTaskId(requiredString(body, "taskId")) }),
+    });
+    sendJson(response, 200, { event });
+    return;
+  }
+  if (command === "task") {
+    const prUrl = optionalString(body, "prUrl");
+    const title = optionalString(body, "title");
+    const event = await appendEvent(root, config, parseLaneId(requiredString(body, "lane")), {
+      type: "task.update",
+      taskId: parseTaskId(requiredString(body, "taskId")),
+      taskState: parseTaskState(requiredString(body, "state")),
+      summary: parseUserText(requiredString(body, "summary")),
+      ...(title === undefined ? {} : { title: parseUserText(title) }),
+      ...(prUrl === undefined ? {} : { prUrl: parsePullRequestUrl(prUrl) }),
+    });
+    sendJson(response, 200, { event });
+    return;
+  }
+  if (command === "report") {
+    const taskId = optionalString(body, "taskId");
+    const event = await appendEvent(root, config, resolveLane(config, optionalString(body, "lane")), {
+      type: "report",
+      summary: parseUserText(requiredString(body, "summary")),
+      ...(taskId === undefined ? {} : { taskId: parseTaskId(taskId) }),
     });
     sendJson(response, 200, { event });
     return;

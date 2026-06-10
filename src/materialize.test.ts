@@ -6,6 +6,9 @@ import {
   parseClaimPath,
   parseLaneId,
   parseMessageAddress,
+  parsePullRequestUrl,
+  parseTaskId,
+  parseTaskState,
   parseStatusState,
   parseUserText,
   writerId,
@@ -336,6 +339,77 @@ describe("Ocentra Parent Hub ledger", () => {
     }
   });
 
+  it("materializes typed worker and task lifecycle views", async () => {
+    const root = await tempRoot();
+    const config = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "codex-b",
+      nodeId: "node-worker",
+      nodeName: "WORKER",
+    });
+    await appendEvent(root, config, config.defaultLane, {
+      type: "task.update",
+      taskId: parseTaskId("task-preview-gate"),
+      taskState: parseTaskState("started"),
+      title: parseUserText("Preview gate"),
+      summary: parseUserText("started work"),
+    });
+    await appendEvent(root, config, config.defaultLane, {
+      type: "task.update",
+      taskId: parseTaskId("task-preview-gate"),
+      taskState: parseTaskState("pr_ready"),
+      summary: parseUserText("PR is ready"),
+      prUrl: parsePullRequestUrl("https://github.com/ocentra/OcentraParent/pull/123"),
+    });
+
+    const state = await materialize(root);
+    expect(state.dashboard.workerCount).toBe(1);
+    expect(state.dashboard.activeTaskCount).toBe(1);
+    expect([...state.workers.values()][0]?.state).toBe("pr_ready");
+    expect([...state.tasks.values()][0]?.state).toBe("pr_ready");
+
+    await appendEvent(root, config, config.defaultLane, {
+      type: "task.update",
+      taskId: parseTaskId("task-preview-gate"),
+      taskState: parseTaskState("done"),
+      summary: parseUserText("merged"),
+    });
+    const doneState = await materialize(root);
+    expect(doneState.dashboard.activeTaskCount).toBe(0);
+    expect([...doneState.workers.values()][0]?.free).toBe(true);
+  });
+
+  it("serves workers, free workers, and active task queries over HTTP", async () => {
+    const root = await tempRoot();
+    await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-boss",
+      nodeName: "BOSS",
+    });
+
+    const server = await startPeerServer(root, 0);
+    try {
+      await postJson(new URL("/commands/task", server.url), {
+        lane: "codex-b",
+        taskId: "task-1",
+        state: "progress",
+        summary: "building the slice",
+      });
+      const workers = await fetchJson(new URL("/workers", server.url)) as { workers?: Array<{ state?: string }> };
+      const free = await fetchJson(new URL("/workers/free", server.url)) as { workers?: Array<unknown> };
+      const active = await fetchJson(new URL("/tasks/active", server.url)) as { tasks?: Array<{ taskId?: string }> };
+
+      expect(workers.workers?.[0]?.state).toBe("progress");
+      expect(free.workers).toHaveLength(0);
+      expect(active.tasks?.[0]?.taskId).toBe("task-1");
+    } finally {
+      await server.close();
+    }
+  });
+
   it("reports hash tampering in doctor inspection", async () => {
     const root = await tempRoot();
     const config = await initIdentity({
@@ -404,4 +478,10 @@ async function postJson(url: URL, body: unknown): Promise<Record<string, unknown
   });
   expect(response.status).toBe(200);
   return await response.json() as Record<string, unknown>;
+}
+
+async function fetchJson(url: URL): Promise<unknown> {
+  const response = await fetch(url);
+  expect(response.status).toBe(200);
+  return await response.json();
 }
