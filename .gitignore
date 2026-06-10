@@ -2,6 +2,9 @@ node_modules/
 dist/
 coverage/
 data/
+identity/
+streams/
+archive/
 views/
 index/
 streams/*.lock

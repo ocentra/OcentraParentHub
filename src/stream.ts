@@ -15,7 +15,7 @@ import {
 } from "./domain.js";
 import { completeEvent, HubEvent, NewEventInput, parseHubEvent } from "./events.js";
 import { randomEventId } from "./identity.js";
-import { lockPath, streamPath, streamsDir } from "./paths.js";
+import { archivedStreamDir, archiveStreamsDir, lockPath, streamPath, streamsDir } from "./paths.js";
 
 export async function appendEvent(
   root: string,
@@ -63,18 +63,19 @@ export async function readAllStreams(root: string): Promise<{
   let duplicateCount = 0;
 
   for (const fileName of await listStreamFiles(root)) {
-    const path = join(streamsDir(root), fileName);
-    for (const parsed of await readStreamLenient(path)) {
-      if (parsed.kind === "warning") {
-        warnings.push(`${basename(path)}:${parsed.line}: ${parsed.warning}`);
-        continue;
+    for (const segment of await streamSegments(root, fileName)) {
+      for (const parsed of await readStreamLenient(segment.path)) {
+        if (parsed.kind === "warning") {
+          warnings.push(`${basename(segment.path)}:${parsed.line}: ${parsed.warning}`);
+          continue;
+        }
+        if (seen.has(parsed.event.id)) {
+          duplicateCount += 1;
+          continue;
+        }
+        seen.add(parsed.event.id);
+        events.push(parsed.event);
       }
-      if (seen.has(parsed.event.id)) {
-        duplicateCount += 1;
-        continue;
-      }
-      seen.add(parsed.event.id);
-      events.push(parsed.event);
     }
   }
 
@@ -83,6 +84,54 @@ export async function readAllStreams(root: string): Promise<{
     return ts === 0 ? left.id.localeCompare(right.id) : ts;
   });
   return { events, duplicateCount, warnings };
+}
+
+export async function listCanonicalStreamNames(root: string): Promise<string[]> {
+  const names = new Set<string>(await listStreamFiles(root));
+  try {
+    for (const streamName of await readdir(archiveStreamsDir(root))) {
+      if (streamName.endsWith(".ndjson") && !streamName.includes(".conflict.")) {
+        names.add(streamName);
+      }
+    }
+  } catch (error) {
+    if (!isMissingPath(error)) {
+      throw error;
+    }
+  }
+  return [...names].sort();
+}
+
+export type StreamSegment = {
+  readonly streamName: string;
+  readonly path: string;
+  readonly archived: boolean;
+};
+
+export async function streamSegments(root: string, streamName: string): Promise<StreamSegment[]> {
+  const segments: StreamSegment[] = [];
+  try {
+    const archiveNames = (await readdir(archivedStreamDir(root, streamName)))
+      .filter((name) => name.endsWith(".ndjson"))
+      .sort();
+    for (const archiveName of archiveNames) {
+      segments.push({
+        streamName,
+        path: join(archivedStreamDir(root, streamName), archiveName),
+        archived: true,
+      });
+    }
+  } catch (error) {
+    if (!isMissingPath(error)) {
+      throw error;
+    }
+  }
+  segments.push({
+    streamName,
+    path: join(streamsDir(root), streamName),
+    archived: false,
+  });
+  return segments;
 }
 
 export async function readStream(path: string): Promise<HubEvent[]> {

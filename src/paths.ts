@@ -5,6 +5,14 @@ export function streamsDir(root: string): string {
   return join(root, "streams");
 }
 
+export function archiveStreamsDir(root: string): string {
+  return join(root, "archive", "streams");
+}
+
+export function archivedStreamDir(root: string, streamName: string): string {
+  return join(archiveStreamsDir(root), streamName);
+}
+
 export function viewsDir(root: string): string {
   return join(root, "views");
 }

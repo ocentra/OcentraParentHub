@@ -62,6 +62,7 @@ npm run laser -- note "raw operator note"
 npm run laser -- materialize
 npm run laser -- doctor
 npm run laser -- streams
+npm run laser -- compact --keep-latest 250
 npm run laser -- sync --peer E:\SomeOtherHub
 npm run laser -- serve --port 8787
 npm run laser -- sync --peer http://127.0.0.1:8787
@@ -74,6 +75,18 @@ npm run laser -- sync --peer http://127.0.0.1:8787
 - **Ownership:** `claim`, `release`, and `claim.resolve` events drive ownership. Overlapping active claim paths become conflicts until released or resolved.
 - **Status:** `status` events carry low-frequency lane state. V1 intentionally avoids replacing Codex internal heartbeat.
 - **Doctor:** `doctor` validates stream hashes, sequence continuity, malformed lines, materialized warnings, and ownership conflicts.
+
+## Retention And Compaction
+
+Live views are not append-only truth. The default `inbox` command shows unread messages only; use `inbox <lane> --all` when debugging historical or acked items.
+
+Canonical event history can be compacted without deleting truth:
+
+```powershell
+npm run laser -- compact --keep-latest 250
+```
+
+Compaction moves cold stream prefixes from `streams/<writer>.ndjson` into immutable archive segments under `archive/streams/<writer>.ndjson/`. The hot stream keeps the most recent suffix so local sync and normal inspection stay small. Materialization and `doctor` read both archive segments and hot streams, so rebuildable truth is preserved.
 
 ## V2 HTTP Peer Sync
 
@@ -125,3 +138,4 @@ The V1 scaffold covers:
 - same-stream divergence conflict copies
 - HTTP peer sync
 - hash-chain tamper detection
+- cold stream compaction into immutable archive segments

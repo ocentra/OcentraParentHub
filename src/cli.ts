@@ -14,6 +14,7 @@ import { inspectLedger } from "./doctor.js";
 import { initIdentity, loadIdentity, resolveLane } from "./identity.js";
 import { materialize, materializedToJson } from "./materialize.js";
 import { streamsDir } from "./paths.js";
+import { compactLedger } from "./retention.js";
 import { startPeerServer } from "./server.js";
 import { appendEvent } from "./stream.js";
 import { syncFromHttpPeer } from "./sync/http.js";
@@ -62,6 +63,9 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "materialize":
       print(materializedToJson(await materialize(root)));
+      return;
+    case "compact":
+      await commandCompact(rest);
       return;
     case "doctor":
       await commandDoctor();
@@ -112,9 +116,12 @@ async function commandMessage(argv: string[]): Promise<void> {
 }
 
 async function commandInbox(argv: string[]): Promise<void> {
-  const lane = parseLaneId(argv[0] ?? (await loadIdentity(root)).defaultLane);
+  const all = argv.includes("--all");
+  const laneArg = argv.find((arg) => !arg.startsWith("--"));
+  const lane = parseLaneId(laneArg ?? (await loadIdentity(root)).defaultLane);
   const state = await materialize(root);
-  print(state.lanes.get(lane)?.inbox ?? []);
+  const inbox = state.lanes.get(lane)?.inbox ?? [];
+  print(all ? inbox : inbox.filter((item) => item.ackedBy.length === 0));
 }
 
 async function commandAck(argv: string[]): Promise<void> {
@@ -216,6 +223,11 @@ async function commandDoctor(): Promise<void> {
     conflicts: state.ownership.conflicts,
     dashboard: state.dashboard,
   });
+}
+
+async function commandCompact(argv: string[]): Promise<void> {
+  const keepLatest = Number(optionValue(argv, "--keep-latest") ?? "250");
+  print(await compactLedger(root, { keepLatest }));
 }
 
 async function commandStreams(): Promise<void> {

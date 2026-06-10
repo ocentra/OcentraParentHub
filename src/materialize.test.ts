@@ -13,6 +13,7 @@ import {
 import { inspectLedger } from "./doctor.js";
 import { initIdentity } from "./identity.js";
 import { materialize } from "./materialize.js";
+import { compactLedger } from "./retention.js";
 import { streamPath } from "./paths.js";
 import { startPeerServer } from "./server.js";
 import { appendEvent } from "./stream.js";
@@ -285,8 +286,42 @@ describe("Ocentra Parent Hub ledger", () => {
     expect(inspection.ok).toBe(false);
     expect(inspection.diagnostics[0]?.message).toContain("hash-invalid");
   });
+
+  it("compacts cold stream prefixes into archives without losing materialized truth", async () => {
+    const root = await tempRoot();
+    const config = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-hp",
+      nodeName: "HP",
+    });
+    for (const body of ["one", "two", "three", "four", "five"]) {
+      await appendEvent(root, config, config.defaultLane, {
+        type: "note",
+        body: parseUserText(body),
+      });
+    }
+
+    const result = await compactLedger(root, { keepLatest: 2 });
+    expect(result.compactedStreams[0]?.archivedEvents).toBe(3);
+    expect((await hotLineCount(streamPath(root, config.nodeId, config.defaultLane)))).toBe(2);
+    expect((await materialize(root)).dashboard.eventCount).toBe(5);
+    expect((await inspectLedger(root)).ok).toBe(true);
+
+    const next = await appendEvent(root, config, config.defaultLane, {
+      type: "note",
+      body: parseUserText("six"),
+    });
+    expect(next.seq).toBe(6);
+    expect((await materialize(root)).dashboard.eventCount).toBe(6);
+  });
 });
 
 async function tempRoot(): Promise<string> {
   return mkdtemp(join(tmpdir(), "ocentra-parent-hub-"));
+}
+
+async function hotLineCount(path: string): Promise<number> {
+  return (await readFile(path, "utf8")).split(/\r?\n/).filter((line) => line.trim().length > 0).length;
 }
