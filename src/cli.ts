@@ -8,6 +8,7 @@ import {
   parseMessageAddress,
   parsePeerName,
   parsePullRequestUrl,
+  parseSessionId,
   parseStatusState,
   parseTaskId,
   parseTaskState,
@@ -78,6 +79,9 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "heartbeat":
       await commandHeartbeat(rest);
+      return;
+    case "session":
+      await commandSession(rest);
       return;
     case "task":
       await commandTask(rest);
@@ -296,6 +300,52 @@ async function commandHeartbeat(argv: string[]): Promise<void> {
   }));
 }
 
+async function commandSession(argv: string[]): Promise<void> {
+  const [subcommand, laneRaw, sessionRaw] = argv;
+  if ((subcommand !== "claim" && subcommand !== "release") || laneRaw === undefined || sessionRaw === undefined) {
+    throw new Error("usage: ledger session <claim|release> <lane> <sessionId> [--ttl-seconds <seconds>] [--summary <summary>]");
+  }
+  const config = await loadIdentity(root);
+  const lane = resolveLane(config, laneRaw);
+  const sessionId = parseSessionId(sessionRaw);
+  const summary = optionValue(argv, "--summary");
+  if (subcommand === "release") {
+    print(await appendEvent(root, config, lane, {
+      type: "session.release",
+      sessionId,
+      ...(summary === undefined ? {} : { summary: parseUserText(summary) }),
+    }));
+    return;
+  }
+
+  const existing = (await materialize(root)).sessions.get(lane);
+  if (existing !== undefined && existing.sessionId !== sessionId) {
+    print({
+      ok: false,
+      lane,
+      sessionId,
+      activeSession: existing,
+      message: `lane ${lane} is already owned by active session ${existing.sessionId}`,
+    });
+    process.exitCode = 1;
+    return;
+  }
+
+  const ttlSeconds = Number(optionValue(argv, "--ttl-seconds") ?? "3600");
+  const event = await appendEvent(root, config, lane, {
+    type: "session.claim",
+    sessionId,
+    ttlSeconds,
+    ...(summary === undefined ? {} : { summary: parseUserText(summary) }),
+  });
+  print({
+    ok: true,
+    lane,
+    sessionId,
+    event,
+  });
+}
+
 async function commandTask(argv: string[]): Promise<void> {
   const [laneRaw, taskIdRaw, stateRaw, ...summaryParts] = argv;
   if (laneRaw === undefined || taskIdRaw === undefined || stateRaw === undefined || summaryParts.length === 0) {
@@ -374,10 +424,12 @@ async function commandGuard(argv: string[]): Promise<void> {
   const config = await loadIdentity(root);
   const lane = optionValue(argv, "--lane") ?? config.defaultLane;
   const changed = optionValue(argv, "--changed");
+  const sessionId = optionValue(argv, "--session");
   const result = await guardLedger(root, {
     lane,
     changedPaths: changed === undefined ? [] : splitPathList(changed),
     allowPrimaryWithoutClaims: argv.includes("--allow-primary-without-claims"),
+    ...(sessionId === undefined ? {} : { sessionId }),
   });
   print(result);
   if (!result.ok) {

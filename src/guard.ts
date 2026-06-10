@@ -15,6 +15,7 @@ export async function guardLedger(
     readonly lane: string;
     readonly changedPaths?: readonly string[];
     readonly allowPrimaryWithoutClaims?: boolean;
+    readonly sessionId?: string;
   },
 ): Promise<GuardResult> {
   const lane = parseLaneId(input.lane);
@@ -22,6 +23,10 @@ export async function guardLedger(
   const inspection = await inspectLedger(root);
   const findings: string[] = [];
   const laneView = state.lanes.get(lane);
+  const activeSession = state.sessions.get(lane);
+  if (input.sessionId !== undefined && activeSession !== undefined && activeSession.sessionId !== input.sessionId) {
+    findings.push(`lane ${lane} is owned by active session ${activeSession.sessionId}`);
+  }
   const unread = laneView?.inbox.filter((item) => item.ackedBy.length === 0) ?? [];
   if (lane !== "primary" && unread.length > 0) {
     findings.push(`lane ${lane} has ${unread.length} unread ledger message(s)`);

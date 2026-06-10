@@ -7,6 +7,7 @@ import {
   parseLaneId,
   parseMessageAddress,
   parsePullRequestUrl,
+  parseSessionId,
   parseTaskId,
   parseTaskState,
   parseStatusState,
@@ -130,6 +131,33 @@ describe("Ocentra Parent Hub ledger", () => {
     const lane = (await materialize(root)).lanes.get(config.defaultLane);
     expect(lane?.heartbeat?.state).toBe("online");
     expect(lane?.heartbeat?.stale).toBe(false);
+  });
+
+  it("guards a lane against duplicate active Codex sessions", async () => {
+    const root = await tempRoot();
+    const config = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "codex-d",
+      nodeId: "node-gamedev",
+      nodeName: "GAMEDEV",
+    });
+    await appendEvent(root, config, config.defaultLane, {
+      type: "session.claim",
+      sessionId: parseSessionId("session-one"),
+      ttlSeconds: 3600,
+      summary: parseUserText("first D thread owns lane"),
+    });
+
+    const state = await materialize(root);
+    expect(state.sessions.get(config.defaultLane)?.sessionId).toBe("session-one");
+
+    const ownerGuard = await guardLedger(root, { lane: "codex-d", sessionId: "session-one" });
+    expect(ownerGuard.ok).toBe(true);
+
+    const duplicateGuard = await guardLedger(root, { lane: "codex-d", sessionId: "session-two" });
+    expect(duplicateGuard.ok).toBe(false);
+    expect(duplicateGuard.findings.join("\n")).toContain("active session session-one");
   });
 
   it("routes addressed messages to the target lane inbox", async () => {

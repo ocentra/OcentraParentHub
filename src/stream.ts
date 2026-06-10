@@ -7,6 +7,7 @@ import {
   LaneId,
   MessageAddress,
   PullRequestUrl,
+  SessionId,
   StatusState,
   TaskId,
   TaskState,
@@ -160,6 +161,8 @@ export type EventCommand =
   | { type: "claim.resolve"; paths: ClaimPath[]; owner?: WriterId }
   | { type: "status"; state: StatusState; summary: UserText }
   | { type: "heartbeat"; state: StatusState; summary: UserText; ttlSeconds: number }
+  | { type: "session.claim"; sessionId: SessionId; ttlSeconds: number; summary?: UserText }
+  | { type: "session.release"; sessionId: SessionId; summary?: UserText }
   | { type: "worker.update"; workerState: WorkerState; summary: UserText; taskId?: TaskId }
   | {
     type: "task.update";
@@ -242,6 +245,19 @@ function eventInput(config: HubConfig, lane: LaneId, command: EventCommand): New
         state: command.state,
         summary: command.summary,
         ttlSeconds: command.ttlSeconds,
+      };
+    case "session.claim":
+      return {
+        ...base,
+        sessionId: command.sessionId,
+        ttlSeconds: command.ttlSeconds,
+        ...(command.summary === undefined ? {} : { summary: command.summary }),
+      };
+    case "session.release":
+      return {
+        ...base,
+        sessionId: command.sessionId,
+        ...(command.summary === undefined ? {} : { summary: command.summary }),
       };
     case "worker.update":
       return {

@@ -16,6 +16,7 @@ import {
   NodeIdSchema,
   NodeNameSchema,
   PullRequestUrlSchema,
+  SessionIdSchema,
   StatusStateSchema,
   TaskIdSchema,
   TaskStateSchema,
@@ -54,6 +55,7 @@ export const HubEventSchema = Schema.Struct({
   prUrl: Schema.optional(PullRequestUrlSchema),
   summary: Schema.optional(UserTextSchema),
   ttlSeconds: Schema.optional(Schema.Number),
+  sessionId: Schema.optional(SessionIdSchema),
 });
 export type HubEvent = Schema.Schema.Type<typeof HubEventSchema>;
 

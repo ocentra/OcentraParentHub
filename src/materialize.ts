@@ -6,6 +6,7 @@ import {
   NodeId,
   NodeName,
   PullRequestUrl,
+  SessionId,
   TaskId,
   TaskState,
   WorkerState,
@@ -24,6 +25,7 @@ export type MaterializedHub = {
   readonly lanes: ReadonlyMap<LaneId, LaneView>;
   readonly workers: ReadonlyMap<WriterId, WorkerView>;
   readonly tasks: ReadonlyMap<TaskId, TaskView>;
+  readonly sessions: ReadonlyMap<LaneId, SessionLeaseView>;
   readonly warnings: readonly string[];
 };
 
@@ -35,6 +37,7 @@ export type MaterializedHubJson = {
   readonly freeWorkers: readonly WorkerView[];
   readonly activeTasks: readonly TaskView[];
   readonly tasks: Record<string, TaskView>;
+  readonly sessions: Record<string, SessionLeaseView>;
   readonly warnings: readonly string[];
 };
 
@@ -44,6 +47,7 @@ export type DashboardView = {
   readonly laneCount: number;
   readonly inboxCount: number;
   readonly staleHeartbeatCount: number;
+  readonly activeSessionCount: number;
   readonly workerCount: number;
   readonly freeWorkerCount: number;
   readonly activeTaskCount: number;
@@ -89,6 +93,18 @@ export type HeartbeatView = {
   readonly ttlSeconds: number;
   readonly expiresAt: string;
   readonly stale: boolean;
+};
+
+export type SessionLeaseView = {
+  readonly lane: LaneId;
+  readonly writer: WriterId;
+  readonly sessionId: SessionId;
+  readonly summary?: string;
+  readonly claimedAt: string;
+  readonly ttlSeconds: number;
+  readonly expiresAt: string;
+  readonly stale: boolean;
+  readonly eventId: string;
 };
 
 export type WorkerView = {
@@ -146,6 +162,7 @@ export async function materialize(root: string): Promise<MaterializedHub> {
   const tasks = new Map<TaskId, TaskView>();
   const acks = new Map<string, Set<WriterId>>();
   const activeClaims = new Map<string, ClaimView>();
+  const sessions = new Map<LaneId, SessionLeaseView>();
 
   for (const event of events) {
     const lane = ensureLane(lanes, event.lane);
@@ -208,6 +225,29 @@ export async function materialize(root: string): Promise<MaterializedHub> {
         worker.state = parseWorkerState("idle");
       }
       worker.summary = event.summary;
+    }
+    if (event.type === "session.claim" && event.sessionId !== undefined) {
+      const ttlSeconds = event.ttlSeconds ?? 3600;
+      const expiresAt = new Date(Date.parse(event.ts) + ttlSeconds * 1000).toISOString();
+      sessions.set(event.lane, {
+        lane: event.lane,
+        writer: event.writer,
+        sessionId: event.sessionId,
+        claimedAt: event.ts,
+        ttlSeconds,
+        expiresAt,
+        stale: Date.parse(expiresAt) < Date.now(),
+        eventId: event.id,
+        ...(event.summary === undefined ? {} : { summary: event.summary }),
+      });
+      worker.summary = event.summary ?? `session ${event.sessionId}`;
+    }
+    if (event.type === "session.release" && event.sessionId !== undefined) {
+      const active = sessions.get(event.lane);
+      if (active?.sessionId === event.sessionId) {
+        sessions.delete(event.lane);
+      }
+      worker.summary = event.summary ?? `released session ${event.sessionId}`;
     }
     if (event.type === "worker.update" && event.workerState !== undefined && event.summary !== undefined) {
       worker.state = event.workerState;
@@ -292,6 +332,7 @@ export async function materialize(root: string): Promise<MaterializedHub> {
     conflicts: detectConflicts([...activeClaims.values()]),
   };
   const frozenLanes = freezeLanes(lanes);
+  const activeSessions = freezeSessions(sessions);
   const frozenWorkers = freezeWorkers(workers, ownership.activeClaims, tasks);
   const freeWorkers = [...frozenWorkers.values()].filter((worker) => worker.free);
   const activeTasks = [...tasks.values()].filter((task) => task.active);
@@ -301,6 +342,7 @@ export async function materialize(root: string): Promise<MaterializedHub> {
     laneCount: frozenLanes.size,
     inboxCount: [...frozenLanes.values()].reduce((count, lane) => count + lane.inbox.length, 0),
     staleHeartbeatCount: [...frozenLanes.values()].filter((lane) => lane.heartbeat?.stale === true).length,
+    activeSessionCount: activeSessions.size,
     workerCount: frozenWorkers.size,
     freeWorkerCount: freeWorkers.length,
     activeTaskCount: activeTasks.length,
@@ -308,7 +350,7 @@ export async function materialize(root: string): Promise<MaterializedHub> {
     generatedAt: new Date().toISOString(),
   };
 
-  const result = { dashboard, ownership, lanes: frozenLanes, workers: frozenWorkers, tasks, warnings };
+  const result = { dashboard, ownership, lanes: frozenLanes, workers: frozenWorkers, tasks, sessions: activeSessions, warnings };
   await writeViews(root, result);
   return result;
 }
@@ -322,6 +364,7 @@ export function materializedToJson(state: MaterializedHub): MaterializedHubJson 
     freeWorkers: getFreeWorkers(state),
     activeTasks: getActiveTasks(state),
     tasks: Object.fromEntries(state.tasks.entries()),
+    sessions: Object.fromEntries(state.sessions.entries()),
     warnings: state.warnings,
   };
 }
@@ -413,6 +456,10 @@ function freezeLanes(lanes: ReadonlyMap<LaneId, MutableLaneView>): ReadonlyMap<L
       },
     ]),
   );
+}
+
+function freezeSessions(sessions: ReadonlyMap<LaneId, SessionLeaseView>): ReadonlyMap<LaneId, SessionLeaseView> {
+  return new Map([...sessions.entries()].filter((entry) => !entry[1].stale));
 }
 
 function freezeWorkers(
@@ -562,6 +609,7 @@ async function writeViews(root: string, state: MaterializedHub): Promise<void> {
   await writeFile(join(viewsDir(root), "workers.json"), `${JSON.stringify(getWorkers(state), null, 2)}\n`);
   await writeFile(join(viewsDir(root), "free-workers.json"), `${JSON.stringify(getFreeWorkers(state), null, 2)}\n`);
   await writeFile(join(viewsDir(root), "active-tasks.json"), `${JSON.stringify(getActiveTasks(state), null, 2)}\n`);
+  await writeFile(join(viewsDir(root), "sessions.json"), `${JSON.stringify(Object.fromEntries(state.sessions), null, 2)}\n`);
   for (const lane of state.lanes.values()) {
     const laneDir = laneViewsDir(root, parseLaneId(lane.lane));
     await mkdir(laneDir, { recursive: true });

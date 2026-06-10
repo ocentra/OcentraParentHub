@@ -93,6 +93,14 @@ export const TaskIdSchema = Schema.String.pipe(
 );
 export type TaskId = Schema.Schema.Type<typeof TaskIdSchema>;
 
+export const SessionIdSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(180),
+  Schema.pattern(identityPattern),
+  Schema.brand("SessionId"),
+);
+export type SessionId = Schema.Schema.Type<typeof SessionIdSchema>;
+
 export const PullRequestUrlSchema = Schema.String.pipe(
   Schema.minLength(8),
   Schema.maxLength(500),
@@ -160,6 +168,8 @@ export const EventTypeSchema = Schema.Literal(
   "claim.resolve",
   "status",
   "heartbeat",
+  "session.claim",
+  "session.release",
   "worker.update",
   "task.update",
   "report",
@@ -189,6 +199,7 @@ export const parseClaimPath = Schema.decodeUnknownSync(ClaimPathSchema);
 export const parseMessageAddress = Schema.decodeUnknownSync(MessageAddressSchema);
 export const parseUserText = Schema.decodeUnknownSync(UserTextSchema);
 export const parseTaskId = Schema.decodeUnknownSync(TaskIdSchema);
+export const parseSessionId = Schema.decodeUnknownSync(SessionIdSchema);
 export const parsePullRequestUrl = Schema.decodeUnknownSync(PullRequestUrlSchema);
 export const parsePeerName = Schema.decodeUnknownSync(PeerNameSchema);
 export const parsePeerUrl = Schema.decodeUnknownSync(PeerUrlSchema);
