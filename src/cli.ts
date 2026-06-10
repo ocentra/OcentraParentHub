@@ -21,7 +21,7 @@ import { syncFromHttpPeer } from "./sync/http.js";
 import { syncFromPeer } from "./sync/local.js";
 
 const args = process.argv.slice(2);
-const root = resolve(process.env.LASER_ROOT ?? ".");
+const root = resolve(process.env.LEDGER_ROOT ?? process.env.LASER_ROOT ?? ".");
 
 await main(args);
 
@@ -90,7 +90,7 @@ async function main(argv: string[]): Promise<void> {
 async function commandInit(argv: string[]): Promise<void> {
   const [hub] = argv;
   if (hub === undefined) {
-    throw new Error("usage: laser init <hub> --lane <lane>");
+    throw new Error("usage: ledger init <hub> --lane <lane>");
   }
   const lane = optionValue(argv, "--lane") ?? "primary";
   print(await initIdentity({ root, hub, lane }));
@@ -99,7 +99,7 @@ async function commandInit(argv: string[]): Promise<void> {
 async function commandLane(argv: string[]): Promise<void> {
   const [subcommand, lane] = argv;
   if (subcommand !== "register" || lane === undefined) {
-    throw new Error("usage: laser lane register <lane>");
+    throw new Error("usage: ledger lane register <lane>");
   }
   const config = await loadIdentity(root);
   print(await appendEvent(root, config, parseLaneId(lane), { type: "lane.register" }));
@@ -133,7 +133,7 @@ async function commandStart(argv: string[]): Promise<void> {
 async function commandMessage(argv: string[]): Promise<void> {
   const [to, ...bodyParts] = argv;
   if (to === undefined || bodyParts.length === 0) {
-    throw new Error("usage: laser msg <to> <body>");
+    throw new Error("usage: ledger msg <to> <body>");
   }
   const config = await loadIdentity(root);
   print(await appendEvent(root, config, config.defaultLane, {
@@ -155,7 +155,7 @@ async function commandInbox(argv: string[]): Promise<void> {
 async function commandAck(argv: string[]): Promise<void> {
   const [messageId] = argv;
   if (messageId === undefined) {
-    throw new Error("usage: laser ack <messageId>");
+    throw new Error("usage: ledger ack <messageId>");
   }
   const config = await loadIdentity(root);
   print(await appendEvent(root, config, config.defaultLane, {
@@ -167,7 +167,7 @@ async function commandAck(argv: string[]): Promise<void> {
 async function commandHandoff(argv: string[]): Promise<void> {
   const [to, ...bodyParts] = argv;
   if (to === undefined || bodyParts.length === 0) {
-    throw new Error("usage: laser handoff <to> <body>");
+    throw new Error("usage: ledger handoff <to> <body>");
   }
   const config = await loadIdentity(root);
   print(await appendEvent(root, config, config.defaultLane, {
@@ -179,7 +179,7 @@ async function commandHandoff(argv: string[]): Promise<void> {
 
 async function commandNote(argv: string[]): Promise<void> {
   if (argv.length === 0) {
-    throw new Error("usage: laser note <body>");
+    throw new Error("usage: ledger note <body>");
   }
   const config = await loadIdentity(root);
   print(await appendEvent(root, config, config.defaultLane, {
@@ -191,7 +191,7 @@ async function commandNote(argv: string[]): Promise<void> {
 async function commandClaim(argv: string[]): Promise<void> {
   const [laneRaw, pathRaw] = argv;
   if (laneRaw === undefined || pathRaw === undefined) {
-    throw new Error("usage: laser claim <lane> <path> [--reason <reason>]");
+    throw new Error("usage: ledger claim <lane> <path> [--reason <reason>]");
   }
   const config = await loadIdentity(root);
   const reason = optionValue(argv, "--reason");
@@ -205,7 +205,7 @@ async function commandClaim(argv: string[]): Promise<void> {
 async function commandRelease(argv: string[]): Promise<void> {
   const [laneRaw, pathRaw] = argv;
   if (laneRaw === undefined || pathRaw === undefined) {
-    throw new Error("usage: laser release <lane> <path>");
+    throw new Error("usage: ledger release <lane> <path>");
   }
   const config = await loadIdentity(root);
   print(await appendEvent(root, config, parseLaneId(laneRaw), {
@@ -217,7 +217,7 @@ async function commandRelease(argv: string[]): Promise<void> {
 async function commandResolve(argv: string[]): Promise<void> {
   const [laneRaw, pathRaw] = argv;
   if (laneRaw === undefined || pathRaw === undefined) {
-    throw new Error("usage: laser resolve <lane> <path> [--owner <writer>]");
+    throw new Error("usage: ledger resolve <lane> <path> [--owner <writer>]");
   }
   const config = await loadIdentity(root);
   const owner = optionValue(argv, "--owner");
@@ -231,7 +231,7 @@ async function commandResolve(argv: string[]): Promise<void> {
 async function commandStatus(argv: string[]): Promise<void> {
   const [laneRaw, stateRaw, ...summaryParts] = argv;
   if (laneRaw === undefined || stateRaw === undefined || summaryParts.length === 0) {
-    throw new Error("usage: laser status <lane> <state> <summary>");
+    throw new Error("usage: ledger status <lane> <state> <summary>");
   }
   const config = await loadIdentity(root);
   print(await appendEvent(root, config, resolveLane(config, laneRaw), {
@@ -269,7 +269,7 @@ async function commandStreams(): Promise<void> {
 async function commandSync(argv: string[]): Promise<void> {
   const peer = optionValue(argv, "--peer");
   if (peer === undefined) {
-    throw new Error("usage: laser sync --peer <path>");
+    throw new Error("usage: ledger sync --peer <path>");
   }
   print(peer.startsWith("http://") || peer.startsWith("https://")
     ? await syncFromHttpPeer(root, peer)

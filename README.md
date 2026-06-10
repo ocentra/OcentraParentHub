@@ -48,25 +48,25 @@ The `hash` is computed over every envelope field except `hash`. Events are never
 ## V1 CLI Shape
 
 ```powershell
-npm run laser -- init ocentra-parent --lane primary
-npm run laser -- start codex-b --ttl-seconds 180
-npm run laser -- lane register codex-b
-npm run laser -- msg codex-b "ready for review"
-npm run laser -- inbox codex-b
-npm run laser -- ack evt_...
-npm run laser -- claim codex-b "src/auth/**" --reason "auth cleanup"
-npm run laser -- release codex-b "src/auth/**"
-npm run laser -- resolve codex-b "src/auth/**" --owner node_abc.codex-b
-npm run laser -- status codex-b working "reviewing package preview gate"
-npm run laser -- handoff codex-b "ready for next slice"
-npm run laser -- note "raw operator note"
-npm run laser -- materialize
-npm run laser -- doctor
-npm run laser -- streams
-npm run laser -- compact --keep-latest 250
-npm run laser -- sync --peer E:\SomeOtherHub
-npm run laser -- serve --port 8787
-npm run laser -- sync --peer http://127.0.0.1:8787
+npm run ledger -- init ocentra-parent --lane primary
+npm run ledger -- start codex-b --ttl-seconds 180
+npm run ledger -- lane register codex-b
+npm run ledger -- msg codex-b "ready for review"
+npm run ledger -- inbox codex-b
+npm run ledger -- ack evt_...
+npm run ledger -- claim codex-b "src/auth/**" --reason "auth cleanup"
+npm run ledger -- release codex-b "src/auth/**"
+npm run ledger -- resolve codex-b "src/auth/**" --owner node_abc.codex-b
+npm run ledger -- status codex-b working "reviewing package preview gate"
+npm run ledger -- handoff codex-b "ready for next slice"
+npm run ledger -- note "raw operator note"
+npm run ledger -- materialize
+npm run ledger -- doctor
+npm run ledger -- streams
+npm run ledger -- compact --keep-latest 250
+npm run ledger -- sync --peer E:\SomeOtherHub
+npm run ledger -- serve --port 8787
+npm run ledger -- sync --peer http://127.0.0.1:8787
 ```
 
 ## Materialized Semantics
@@ -85,7 +85,7 @@ Live views are not append-only truth. The default `inbox` command shows unread m
 Canonical event history can be compacted without deleting truth:
 
 ```powershell
-npm run laser -- compact --keep-latest 250
+npm run ledger -- compact --keep-latest 250
 ```
 
 Compaction moves cold stream prefixes from `streams/<writer>.ndjson` into immutable archive segments under `archive/streams/<writer>.ndjson/`. The hot stream keeps the most recent suffix so local sync and normal inspection stay small. Materialization and `doctor` read both archive segments and hot streams, so rebuildable truth is preserved.
@@ -95,13 +95,13 @@ Compaction moves cold stream prefixes from `streams/<writer>.ndjson` into immuta
 Every node can expose its local ledger as a read-only peer:
 
 ```powershell
-npm run laser -- serve --port 8787
+npm run ledger -- serve --port 8787
 ```
 
 Peers can then copy missing stream prefixes:
 
 ```powershell
-npm run laser -- sync --peer http://127.0.0.1:8787
+npm run ledger -- sync --peer http://127.0.0.1:8787
 ```
 
 Implemented endpoints:
@@ -114,7 +114,7 @@ GET /streams/:name
 POST /streams/:name
 ```
 
-`POST /streams/:name` intentionally returns `405` in this version. V2 sync copies stream bytes from the writer's peer and appends only when the local stream is a byte-for-byte prefix. If a same-name stream diverges, Laser writes a `*.conflict.*` copy and refuses to merge it into canonical truth.
+`POST /streams/:name` intentionally returns `405` in this version. V2 sync copies stream bytes from the writer's peer and appends only when the local stream is a byte-for-byte prefix. If a same-name stream diverges, the ledger writes a `*.conflict.*` copy and refuses to merge it into canonical truth.
 
 ## Migration Stance
 
