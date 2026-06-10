@@ -3,10 +3,10 @@ import { join } from "node:path";
 import { streamsDir } from "../paths.js";
 import { eventLines, isPrefix, SyncResult } from "./local.js";
 
-export async function syncFromHttpPeer(root: string, peerUrl: string): Promise<SyncResult> {
+export async function syncFromHttpPeer(root: string, peerUrl: string, token?: string): Promise<SyncResult> {
   await mkdir(streamsDir(root), { recursive: true });
   const base = new URL(peerUrl);
-  const streamsResponse = await fetch(new URL("/streams", base));
+  const streamsResponse = await fetch(new URL("/streams", base), requestInit(token));
   if (!streamsResponse.ok) {
     throw new Error(`peer streams request failed: ${streamsResponse.status}`);
   }
@@ -18,7 +18,7 @@ export async function syncFromHttpPeer(root: string, peerUrl: string): Promise<S
   let imported = 0;
   const conflicts: string[] = [];
   for (const stream of streams) {
-    const remoteResponse = await fetch(new URL(`/streams/${encodeURIComponent(stream)}`, base));
+    const remoteResponse = await fetch(new URL(`/streams/${encodeURIComponent(stream)}`, base), requestInit(token));
     if (!remoteResponse.ok) {
       throw new Error(`peer stream request failed for ${stream}: ${remoteResponse.status}`);
     }
@@ -47,4 +47,10 @@ export async function syncFromHttpPeer(root: string, peerUrl: string): Promise<S
     }
   }
   return { imported, conflicts };
+}
+
+function requestInit(token: string | undefined): RequestInit | undefined {
+  return token === undefined || token.length === 0
+    ? undefined
+    : { headers: { authorization: `Bearer ${token}` } };
 }

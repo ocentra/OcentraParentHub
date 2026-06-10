@@ -272,14 +272,20 @@ async function commandSync(argv: string[]): Promise<void> {
     throw new Error("usage: ledger sync --peer <path>");
   }
   print(peer.startsWith("http://") || peer.startsWith("https://")
-    ? await syncFromHttpPeer(root, peer)
+    ? await syncFromHttpPeer(root, peer, optionValue(argv, "--token") ?? process.env.LEDGER_PEER_TOKEN)
     : await syncFromPeer(root, resolve(peer)));
 }
 
 async function commandServe(argv: string[]): Promise<void> {
   const port = Number(optionValue(argv, "--port") ?? "8787");
-  const server = await startPeerServer(root, port);
-  print({ url: server.url });
+  const host = optionValue(argv, "--host") ?? "127.0.0.1";
+  const token = optionValue(argv, "--token") ?? process.env.LEDGER_HTTP_TOKEN;
+  const server = await startPeerServer(root, {
+    port,
+    host,
+    ...(token === undefined ? {} : { token }),
+  });
+  print({ url: server.url, commandApi: true, authRequired: token !== undefined });
   await new Promise(() => undefined);
 }
 

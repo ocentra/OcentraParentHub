@@ -287,6 +287,55 @@ describe("Ocentra Parent Hub ledger", () => {
     }
   });
 
+  it("accepts localhost HTTP command messages and exposes target inbox", async () => {
+    const root = await tempRoot();
+    await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-boss",
+      nodeName: "BOSS",
+    });
+
+    const server = await startPeerServer(root, 0);
+    try {
+      const messageResponse = await postJson(new URL("/commands/message", server.url), {
+        to: "codex-b",
+        body: "do the preview gate",
+      });
+      const event = messageResponse.event as { type?: unknown };
+      expect(event.type).toBe("message");
+
+      const inboxResponse = await fetch(new URL("/inbox/codex-b", server.url));
+      expect(inboxResponse.status).toBe(200);
+      const inbox = await inboxResponse.json() as { inbox?: Array<{ body?: string }> };
+      expect(inbox.inbox?.[0]?.body).toBe("do the preview gate");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("protects HTTP endpoints when a server token is configured", async () => {
+    const root = await tempRoot();
+    await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-boss",
+      nodeName: "BOSS",
+    });
+
+    const server = await startPeerServer(root, { port: 0, token: "secret" });
+    try {
+      expect((await fetch(new URL("/streams", server.url))).status).toBe(401);
+      expect((await fetch(new URL("/streams", server.url), {
+        headers: { authorization: "Bearer secret" },
+      })).status).toBe(200);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("reports hash tampering in doctor inspection", async () => {
     const root = await tempRoot();
     const config = await initIdentity({
@@ -345,4 +394,14 @@ async function tempRoot(): Promise<string> {
 
 async function hotLineCount(path: string): Promise<number> {
   return (await readFile(path, "utf8")).split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+}
+
+async function postJson(url: URL, body: unknown): Promise<Record<string, unknown>> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  expect(response.status).toBe(200);
+  return await response.json() as Record<string, unknown>;
 }

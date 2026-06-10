@@ -92,16 +92,30 @@ Compaction moves cold stream prefixes from `streams/<writer>.ndjson` into immuta
 
 ## V2 HTTP Peer Sync
 
-Every node can expose its local ledger as a read-only peer:
+Every node can expose its local ledger as a peer and command endpoint:
 
 ```powershell
 npm run ledger -- serve --port 8787
+```
+
+For LAN or tunnel exposure, bind explicitly and require a token:
+
+```powershell
+$env:LEDGER_HTTP_TOKEN="shared-secret"
+npm run ledger -- serve --host 0.0.0.0 --port 8787
 ```
 
 Peers can then copy missing stream prefixes:
 
 ```powershell
 npm run ledger -- sync --peer http://127.0.0.1:8787
+```
+
+With a token-protected peer:
+
+```powershell
+$env:LEDGER_PEER_TOKEN="shared-secret"
+npm run ledger -- sync --peer http://OTHER-PC:8787
 ```
 
 Implemented endpoints:
@@ -111,10 +125,38 @@ GET /health
 GET /manifest
 GET /streams
 GET /streams/:name
+GET /inbox/:lane
+POST /commands/message
+POST /commands/start
+POST /commands/ack
+POST /commands/status
+POST /commands/claim
+POST /commands/release
+POST /commands/resolve
 POST /streams/:name
 ```
 
-`POST /streams/:name` intentionally returns `405` in this version. V2 sync copies stream bytes from the writer's peer and appends only when the local stream is a byte-for-byte prefix. If a same-name stream diverges, the ledger writes a `*.conflict.*` copy and refuses to merge it into canonical truth.
+`POST /streams/:name` intentionally returns `405`. Command endpoints append only to the server's local node stream, preserving one-writer-per-stream. V2 sync copies stream bytes from the writer's peer and appends only when the local stream is a byte-for-byte prefix. If a same-name stream diverges, the ledger writes a `*.conflict.*` copy and refuses to merge it into canonical truth.
+
+Boss-to-lane HTTP message:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8787/commands/message `
+  -ContentType 'application/json' `
+  -Body '{"to":"codex-b","body":"Do the package preview gate next."}'
+```
+
+Codex B startup/mail check:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri http://127.0.0.1:8787/commands/start `
+  -ContentType 'application/json' `
+  -Body '{"lane":"codex-b","ttlSeconds":180}'
+```
 
 ## Migration Stance
 
@@ -139,6 +181,7 @@ The V1 scaffold covers:
 - local filesystem sync without rewriting peer streams
 - same-stream divergence conflict copies
 - HTTP peer sync
+- HTTP command API for message/start/ack/status/ownership commands
 - hash-chain tamper detection
 - cold stream compaction into immutable archive segments
 - startup heartbeat and unread inbox check
