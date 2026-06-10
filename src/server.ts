@@ -1,6 +1,7 @@
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { dashboardHtml } from "./dashboard.js";
 import {
   parseClaimPath,
   parseEventId,
@@ -15,7 +16,7 @@ import {
   parseWriterId,
 } from "./domain.js";
 import { loadIdentity, resolveLane } from "./identity.js";
-import { getActiveTasks, getFreeWorkers, getWorkers, materialize } from "./materialize.js";
+import { getActiveTasks, getFreeWorkers, getWorkers, materialize, materializedToJson } from "./materialize.js";
 import { streamsDir } from "./paths.js";
 import { appendEvent } from "./stream.js";
 import { streamFiles } from "./sync/local.js";
@@ -71,8 +72,17 @@ async function routeRequest(
     sendJson(response, 200, { ok: true });
     return;
   }
+  if (request.method === "GET" && url.pathname === "/") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end(dashboardHtml());
+    return;
+  }
   if (options.token !== undefined && options.token.length > 0 && !isAuthorized(request, options.token)) {
     sendJson(response, 401, { error: "unauthorized" });
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/state") {
+    sendJson(response, 200, materializedToJson(await materialize(root)));
     return;
   }
   if (request.method === "GET" && url.pathname === "/manifest") {

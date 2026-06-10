@@ -341,6 +341,34 @@ describe("Ocentra Parent Hub ledger", () => {
     }
   });
 
+  it("serves a browser dashboard and materialized state endpoint", async () => {
+    const root = await tempRoot();
+    await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-boss",
+      nodeName: "BOSS",
+    });
+
+    const server = await startPeerServer(root, 0);
+    try {
+      await postJson(new URL("/commands/message", server.url), {
+        to: "codex-b",
+        body: "browser mail preview",
+      });
+      const page = await fetch(new URL("/", server.url));
+      expect(page.status).toBe(200);
+      expect(page.headers.get("content-type")).toContain("text/html");
+      expect(await page.text()).toContain("Ocentra Ledger");
+
+      const state = await fetchJson(new URL("/state", server.url)) as { dashboard?: { inboxCount?: number } };
+      expect(state.dashboard?.inboxCount).toBe(1);
+    } finally {
+      await server.close();
+    }
+  });
+
   it("protects HTTP endpoints when a server token is configured", async () => {
     const root = await tempRoot();
     await initIdentity({
