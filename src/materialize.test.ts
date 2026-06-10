@@ -2,11 +2,21 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseClaimPath, parseLaneId, parseMessageAddress, parseStatusState, parseUserText } from "./domain.js";
+import {
+  parseClaimPath,
+  parseLaneId,
+  parseMessageAddress,
+  parseStatusState,
+  parseUserText,
+  writerId,
+} from "./domain.js";
+import { inspectLedger } from "./doctor.js";
 import { initIdentity } from "./identity.js";
 import { materialize } from "./materialize.js";
 import { streamPath } from "./paths.js";
+import { startPeerServer } from "./server.js";
 import { appendEvent } from "./stream.js";
+import { syncFromHttpPeer } from "./sync/http.js";
 import { syncFromPeer } from "./sync/local.js";
 
 describe("Ocentra Parent Hub ledger", () => {
@@ -139,6 +149,141 @@ describe("Ocentra Parent Hub ledger", () => {
     const state = await materialize(hp);
     expect(state.ownership.conflicts).toHaveLength(1);
     expect(state.ownership.conflicts[0]?.lanes).toEqual(["node-hp.codex-b", "node-gamedev.codex-c"]);
+  });
+
+  it("resolves overlapping ownership conflicts by selected writer", async () => {
+    const root = await tempRoot();
+    const hpConfig = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "codex-b",
+      nodeId: "node-hp",
+      nodeName: "HP",
+    });
+    await appendEvent(root, hpConfig, hpConfig.defaultLane, {
+      type: "claim",
+      paths: [parseClaimPath("src/auth/**")],
+    });
+    await appendEvent(root, hpConfig, parseLaneId("codex-c"), {
+      type: "claim",
+      paths: [parseClaimPath("src/auth/login.ts")],
+    });
+    await appendEvent(root, hpConfig, hpConfig.defaultLane, {
+      type: "claim.resolve",
+      paths: [parseClaimPath("src/auth/login.ts")],
+      owner: writerId(hpConfig.nodeId, hpConfig.defaultLane),
+    });
+
+    const state = await materialize(root);
+    expect(state.ownership.conflicts).toHaveLength(0);
+    expect(state.ownership.activeClaims).toHaveLength(1);
+    expect(state.ownership.activeClaims[0]?.writer).toBe("node-hp.codex-b");
+  });
+
+  it("routes broadcast messages to registered lane inboxes", async () => {
+    const root = await tempRoot();
+    const config = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-hp",
+      nodeName: "HP",
+    });
+    await appendEvent(root, config, parseLaneId("codex-b"), { type: "lane.register" });
+    await appendEvent(root, config, config.defaultLane, {
+      type: "message",
+      to: parseMessageAddress("*"),
+      body: parseUserText("all lanes"),
+    });
+
+    const state = await materialize(root);
+    expect(state.lanes.get(parseLaneId("primary"))?.inbox).toHaveLength(1);
+    expect(state.lanes.get(parseLaneId("codex-b"))?.inbox).toHaveLength(1);
+  });
+
+  it("copies same-stream divergence to a conflict file instead of appending", async () => {
+    const left = await tempRoot();
+    const right = await tempRoot();
+    const leftConfig = await initIdentity({
+      root: left,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-hp",
+      nodeName: "HP",
+    });
+    const rightConfig = await initIdentity({
+      root: right,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-hp",
+      nodeName: "HP",
+    });
+    await appendEvent(left, leftConfig, leftConfig.defaultLane, {
+      type: "note",
+      body: parseUserText("left"),
+    });
+    await appendEvent(right, rightConfig, rightConfig.defaultLane, {
+      type: "note",
+      body: parseUserText("right"),
+    });
+
+    const result = await syncFromPeer(left, right);
+    expect(result.imported).toBe(0);
+    expect(result.conflicts).toHaveLength(1);
+  });
+
+  it("syncs streams from an HTTP peer", async () => {
+    const local = await tempRoot();
+    const remote = await tempRoot();
+    await initIdentity({
+      root: local,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-hp",
+      nodeName: "HP",
+    });
+    const remoteConfig = await initIdentity({
+      root: remote,
+      hub: "ocentra-parent",
+      lane: "codex-b",
+      nodeId: "node-gamedev",
+      nodeName: "GAMEDEV",
+    });
+    await appendEvent(remote, remoteConfig, remoteConfig.defaultLane, {
+      type: "message",
+      to: parseMessageAddress("primary"),
+      body: parseUserText("from http peer"),
+    });
+
+    const server = await startPeerServer(remote, 0);
+    try {
+      const result = await syncFromHttpPeer(local, server.url);
+      expect(result.imported).toBe(1);
+      expect((await materialize(local)).dashboard.eventCount).toBe(1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("reports hash tampering in doctor inspection", async () => {
+    const root = await tempRoot();
+    const config = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-hp",
+      nodeName: "HP",
+    });
+    await appendEvent(root, config, config.defaultLane, {
+      type: "note",
+      body: parseUserText("before"),
+    });
+    const path = streamPath(root, config.nodeId, config.defaultLane);
+    await writeFile(path, (await readFile(path, "utf8")).replace("before", "after"));
+
+    const inspection = await inspectLedger(root);
+    expect(inspection.ok).toBe(false);
+    expect(inspection.diagnostics[0]?.message).toContain("hash-invalid");
   });
 });
 

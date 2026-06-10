@@ -1,4 +1,4 @@
-import { mkdir, open, readdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import {
   ClaimPath,
@@ -8,6 +8,7 @@ import {
   MessageAddress,
   StatusState,
   UserText,
+  WriterId,
   nowIso,
   parseEventType,
   writerId,
@@ -42,7 +43,7 @@ export async function appendEvent(
 export async function listStreamFiles(root: string): Promise<string[]> {
   try {
     const names = await readdir(streamsDir(root));
-    return names.filter((name) => name.endsWith(".ndjson")).sort();
+    return names.filter((name) => name.endsWith(".ndjson") && !name.includes(".conflict.")).sort();
   } catch (error) {
     if (isMissingPath(error)) {
       return [];
@@ -103,6 +104,7 @@ export type EventCommand =
   | { type: "ack"; messageId: EventId }
   | { type: "claim"; paths: ClaimPath[]; reason?: UserText }
   | { type: "release"; paths: ClaimPath[] }
+  | { type: "claim.resolve"; paths: ClaimPath[]; owner?: WriterId }
   | { type: "status"; state: StatusState; summary: UserText }
   | { type: "handoff"; to: MessageAddress; body: UserText }
   | { type: "note"; body: UserText };
@@ -162,6 +164,12 @@ function eventInput(config: HubConfig, lane: LaneId, command: EventCommand): New
       return { ...base, paths: command.paths, reason: command.reason };
     case "release":
       return { ...base, paths: command.paths };
+    case "claim.resolve":
+      return {
+        ...base,
+        paths: command.paths,
+        ...(command.owner === undefined ? {} : { owner: command.owner }),
+      };
     case "status":
       return { ...base, state: command.state, summary: command.summary };
     case "handoff":

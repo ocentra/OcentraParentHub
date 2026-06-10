@@ -17,7 +17,7 @@ V1 is deliberately small and implemented as a Node/TypeScript CLI:
 - Every event carries `seq`, `prevEventId`, `prevHash`, and `hash` so stream continuity is auditable.
 - Same-machine append races are guarded by per-stream file locks.
 - Materialized state is disposable JSON under `views/`.
-- Sync is adapter-shaped. V1 includes local filesystem peer sync; HTTP/LAN and Git fallback can come later.
+- Sync is adapter-shaped. V1 includes local filesystem peer sync; V2 includes a read-only HTTP peer server and HTTP stream sync.
 - Domain-bearing strings are branded with Effect Schema. Raw text is accepted only at CLI/file boundaries and parsed immediately.
 
 ## Event Envelope
@@ -55,19 +55,51 @@ npm run laser -- inbox codex-b
 npm run laser -- ack evt_...
 npm run laser -- claim codex-b "src/auth/**" --reason "auth cleanup"
 npm run laser -- release codex-b "src/auth/**"
+npm run laser -- resolve codex-b "src/auth/**" --owner node_abc.codex-b
 npm run laser -- status codex-b working "reviewing package preview gate"
+npm run laser -- handoff codex-b "ready for next slice"
+npm run laser -- note "raw operator note"
 npm run laser -- materialize
 npm run laser -- doctor
 npm run laser -- streams
 npm run laser -- sync --peer E:\SomeOtherHub
+npm run laser -- serve --port 8787
+npm run laser -- sync --peer http://127.0.0.1:8787
 ```
 
 ## Materialized Semantics
 
 - **Deduplication:** materialization indexes by event ID and preserves the first observed event for state generation. Duplicate lines remain in source streams and are reported.
 - **Inbox:** `message` events create inbox items. `ack` events acknowledge explicit event IDs by actor identity.
-- **Ownership:** `claim`, `release`, and future `claim.resolve` events drive ownership. Overlapping active claim paths become conflicts until released or resolved.
+- **Ownership:** `claim`, `release`, and `claim.resolve` events drive ownership. Overlapping active claim paths become conflicts until released or resolved.
 - **Status:** `status` events carry low-frequency lane state. V1 intentionally avoids replacing Codex internal heartbeat.
+- **Doctor:** `doctor` validates stream hashes, sequence continuity, malformed lines, materialized warnings, and ownership conflicts.
+
+## V2 HTTP Peer Sync
+
+Every node can expose its local ledger as a read-only peer:
+
+```powershell
+npm run laser -- serve --port 8787
+```
+
+Peers can then copy missing stream prefixes:
+
+```powershell
+npm run laser -- sync --peer http://127.0.0.1:8787
+```
+
+Implemented endpoints:
+
+```txt
+GET /health
+GET /manifest
+GET /streams
+GET /streams/:name
+POST /streams/:name
+```
+
+`POST /streams/:name` intentionally returns `405` in this version. V2 sync copies stream bytes from the writer's peer and appends only when the local stream is a byte-for-byte prefix. If a same-name stream diverges, Laser writes a `*.conflict.*` copy and refuses to merge it into canonical truth.
 
 ## Migration Stance
 
@@ -90,3 +122,6 @@ The V1 scaffold covers:
 - rebuildable materialized inbox/status/ack state
 - ownership conflict detection for overlapping paths
 - local filesystem sync without rewriting peer streams
+- same-stream divergence conflict copies
+- HTTP peer sync
+- hash-chain tamper detection

@@ -101,6 +101,7 @@ export const EventTypeSchema = Schema.Literal(
   "ack",
   "claim",
   "release",
+  "claim.resolve",
   "status",
   "handoff",
   "note",

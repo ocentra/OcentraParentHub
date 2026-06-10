@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ClaimPath, LaneId, WriterId, parseLaneId } from "./domain.js";
+import { ClaimPath, LaneId, NodeId, NodeName, WriterId, parseLaneId, writerId } from "./domain.js";
 import { assertEventHash, HubEvent } from "./events.js";
 import { laneViewsDir, viewsDir } from "./paths.js";
 import { readAllStreams } from "./stream.js";
@@ -35,6 +35,7 @@ export type OwnershipView = {
 
 export type LaneView = {
   readonly lane: LaneId;
+  readonly registeredWriters: readonly WriterId[];
   readonly inbox: readonly InboxItem[];
   readonly status?: StatusView;
   readonly ackedMessageIds: readonly string[];
@@ -78,11 +79,21 @@ export async function materialize(root: string): Promise<MaterializedHub> {
   }
 
   const lanes = new Map<LaneId, MutableLaneView>();
+  const writers = new Map<WriterId, WriterDirectoryEntry>();
   const acks = new Map<string, Set<WriterId>>();
   const activeClaims = new Map<string, ClaimView>();
 
   for (const event of events) {
     const lane = ensureLane(lanes, event.lane);
+    writers.set(event.writer, {
+      writer: event.writer,
+      nodeId: event.nodeId,
+      nodeName: event.nodeName,
+      lane: event.lane,
+    });
+    if (event.type === "lane.register") {
+      lane.registeredWriters.add(event.writer);
+    }
     if (event.type === "message" || event.type === "handoff") {
       const item: InboxItem = {
         id: event.id,
@@ -92,7 +103,7 @@ export async function materialize(root: string): Promise<MaterializedHub> {
         ...(event.to === undefined ? {} : { to: event.to }),
         ...(event.body === undefined ? {} : { body: event.body }),
       };
-      for (const targetLane of inboxTargetLanes(event)) {
+      for (const targetLane of inboxTargetLanes(event, writers, lanes)) {
         ensureLane(lanes, targetLane).inbox.push(item);
       }
     }
@@ -111,18 +122,30 @@ export async function materialize(root: string): Promise<MaterializedHub> {
       };
     }
     if (event.type === "claim" && event.paths !== undefined) {
-      const claim: ClaimView = {
-        writer: event.writer,
-        lane: event.lane,
-        paths: event.paths,
-        eventId: event.id,
-        ...(event.reason === undefined ? {} : { reason: event.reason }),
-      };
-      activeClaims.set(claimKey(event), claim);
+      for (const path of event.paths) {
+        const claim: ClaimView = {
+          writer: event.writer,
+          lane: event.lane,
+          paths: [path],
+          eventId: event.id,
+          ...(event.reason === undefined ? {} : { reason: event.reason }),
+        };
+        activeClaims.set(claimKey(event.writer, path), claim);
+      }
     }
     if (event.type === "release" && event.paths !== undefined) {
       for (const path of event.paths) {
-        activeClaims.delete(`${event.writer}:${path}`);
+        activeClaims.delete(claimKey(event.writer, path));
+      }
+    }
+    if (event.type === "claim.resolve" && event.paths !== undefined) {
+      for (const path of event.paths) {
+        for (const [key, claim] of activeClaims) {
+          const overlaps = overlappingPaths(claim.paths, [path]).length > 0;
+          if (overlaps && claim.writer !== event.owner) {
+            activeClaims.delete(key);
+          }
+        }
       }
     }
   }
@@ -138,16 +161,17 @@ export async function materialize(root: string): Promise<MaterializedHub> {
     activeClaims: [...activeClaims.values()],
     conflicts: detectConflicts([...activeClaims.values()]),
   };
+  const frozenLanes = freezeLanes(lanes);
   const dashboard = {
     eventCount: events.length,
     duplicateCount,
-    laneCount: lanes.size,
-    inboxCount: [...lanes.values()].reduce((count, lane) => count + lane.inbox.length, 0),
+    laneCount: frozenLanes.size,
+    inboxCount: [...frozenLanes.values()].reduce((count, lane) => count + lane.inbox.length, 0),
     conflictCount: ownership.conflicts.length,
     generatedAt: new Date().toISOString(),
   };
 
-  const result = { dashboard, ownership, lanes, warnings };
+  const result = { dashboard, ownership, lanes: frozenLanes, warnings };
   await writeViews(root, result);
   return result;
 }
@@ -168,6 +192,7 @@ function ensureLane(lanes: Map<LaneId, MutableLaneView>, lane: LaneId): MutableL
   }
   const view: MutableLaneView = {
     lane,
+    registeredWriters: new Set<WriterId>(),
     inbox: [],
     ackedMessageIds: [],
   };
@@ -177,13 +202,36 @@ function ensureLane(lanes: Map<LaneId, MutableLaneView>, lane: LaneId): MutableL
 
 type MutableLaneView = {
   readonly lane: LaneId;
+  readonly registeredWriters: Set<WriterId>;
   inbox: InboxItem[];
   status?: StatusView;
   ackedMessageIds: string[];
 };
 
-function claimKey(event: HubEvent): string {
-  return `${event.writer}:${event.paths?.join("\u0000") ?? ""}`;
+type WriterDirectoryEntry = {
+  readonly writer: WriterId;
+  readonly nodeId: NodeId;
+  readonly nodeName: NodeName;
+  readonly lane: LaneId;
+};
+
+function freezeLanes(lanes: ReadonlyMap<LaneId, MutableLaneView>): ReadonlyMap<LaneId, LaneView> {
+  return new Map(
+    [...lanes.entries()].map(([laneId, lane]) => [
+      laneId,
+      {
+        lane: lane.lane,
+        registeredWriters: [...lane.registeredWriters],
+        inbox: lane.inbox,
+        ...(lane.status === undefined ? {} : { status: lane.status }),
+        ackedMessageIds: lane.ackedMessageIds,
+      },
+    ]),
+  );
+}
+
+function claimKey(writer: WriterId, path: ClaimPath): string {
+  return `${writer}:${path}`;
 }
 
 function detectConflicts(claims: readonly ClaimView[]): OwnershipConflict[] {
@@ -209,13 +257,25 @@ function detectConflicts(claims: readonly ClaimView[]): OwnershipConflict[] {
   return conflicts;
 }
 
-function inboxTargetLanes(event: HubEvent): readonly LaneId[] {
+function inboxTargetLanes(
+  event: HubEvent,
+  writers: ReadonlyMap<WriterId, WriterDirectoryEntry>,
+  lanes: ReadonlyMap<LaneId, MutableLaneView>,
+): readonly LaneId[] {
   if (event.to === undefined || event.to === "*") {
-    return [event.lane];
+    return lanes.size === 0 ? [event.lane] : [...lanes.keys()];
   }
   const raw = String(event.to);
-  if (raw.includes("*")) {
-    return [event.lane];
+  if (raw.endsWith(".*")) {
+    const node = raw.slice(0, -2);
+    const matches = [...writers.values()]
+      .filter((entry) => entry.nodeId === node || entry.nodeName === node)
+      .map((entry) => entry.lane);
+    return uniqueLanes(matches.length === 0 ? [event.lane] : matches);
+  }
+  const specificWriter = [...writers.values()].find((entry) => entry.writer === raw);
+  if (specificWriter !== undefined) {
+    return [specificWriter.lane];
   }
   const lanePart = raw.includes(".") ? raw.slice(raw.lastIndexOf(".") + 1) : raw;
   try {
@@ -223,6 +283,10 @@ function inboxTargetLanes(event: HubEvent): readonly LaneId[] {
   } catch {
     return [event.lane];
   }
+}
+
+function uniqueLanes(lanes: readonly LaneId[]): readonly LaneId[] {
+  return [...new Map(lanes.map((lane) => [lane, lane])).values()];
 }
 
 function overlappingPaths(left: readonly ClaimPath[], right: readonly ClaimPath[]): string[] {
@@ -254,7 +318,10 @@ async function writeViews(root: string, state: MaterializedHub): Promise<void> {
   for (const lane of state.lanes.values()) {
     const laneDir = laneViewsDir(root, parseLaneId(lane.lane));
     await mkdir(laneDir, { recursive: true });
-    await writeFile(join(laneDir, "status.json"), `${JSON.stringify(lane.status ?? null, null, 2)}\n`);
+    await writeFile(
+      join(laneDir, "status.json"),
+      `${JSON.stringify(lane.status ?? null, null, 2)}\n`,
+    );
     await writeFile(join(laneDir, "inbox.md"), renderInbox(lane));
   }
 }

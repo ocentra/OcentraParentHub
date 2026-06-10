@@ -1,36 +1,46 @@
-import { mkdir, open, readdir, readFile } from "node:fs/promises";
+import { copyFile, mkdir, open, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { streamsDir } from "../paths.js";
 
-export async function syncFromPeer(root: string, peer: string): Promise<{ imported: number }> {
+export type SyncResult = {
+  readonly imported: number;
+  readonly conflicts: readonly string[];
+};
+
+export async function syncFromPeer(root: string, peer: string): Promise<SyncResult> {
   await mkdir(streamsDir(root), { recursive: true });
   let imported = 0;
+  const conflicts: string[] = [];
   for (const fileName of await streamFiles(peer)) {
     const localPath = join(streamsDir(root), fileName);
+    const peerPath = join(streamsDir(peer), fileName);
     const peerLines = await eventLines(join(streamsDir(peer), fileName));
     const localLines = await eventLines(localPath);
-    const knownIds = new Set(localLines.map(eventIdFromLine).filter((id) => id !== undefined));
+    if (!isPrefix(localLines, peerLines)) {
+      const conflictName = conflictFileName(fileName);
+      await copyFile(peerPath, join(streamsDir(root), conflictName));
+      conflicts.push(conflictName);
+      continue;
+    }
     const handle = await open(localPath, "a");
     try {
-      for (const line of peerLines) {
-        const id = eventIdFromLine(line);
-        if (id !== undefined && !knownIds.has(id)) {
-          await handle.appendFile(`${line}\n`);
-          knownIds.add(id);
-          imported += 1;
-        }
+      for (const line of peerLines.slice(localLines.length)) {
+        await handle.appendFile(`${line}\n`);
+        imported += 1;
       }
       await handle.sync();
     } finally {
       await handle.close();
     }
   }
-  return { imported };
+  return { imported, conflicts };
 }
 
-async function streamFiles(root: string): Promise<string[]> {
+export async function streamFiles(root: string): Promise<string[]> {
   try {
-    return (await readdir(streamsDir(root))).filter((name) => name.endsWith(".ndjson")).sort();
+    return (await readdir(streamsDir(root)))
+      .filter((name) => name.endsWith(".ndjson") && !name.includes(".conflict."))
+      .sort();
   } catch (error) {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") {
       return [];
@@ -39,7 +49,7 @@ async function streamFiles(root: string): Promise<string[]> {
   }
 }
 
-async function eventLines(path: string): Promise<string[]> {
+export async function eventLines(path: string): Promise<string[]> {
   try {
     return (await readFile(path, "utf8"))
       .split(/\r?\n/)
@@ -53,11 +63,13 @@ async function eventLines(path: string): Promise<string[]> {
   }
 }
 
-function eventIdFromLine(line: string): string | undefined {
-  try {
-    const value = JSON.parse(line) as { id?: unknown };
-    return typeof value.id === "string" ? value.id : undefined;
-  } catch {
-    return undefined;
+export function isPrefix(localLines: readonly string[], peerLines: readonly string[]): boolean {
+  if (localLines.length > peerLines.length) {
+    return false;
   }
+  return localLines.every((line, index) => line === peerLines[index]);
+}
+
+function conflictFileName(fileName: string): string {
+  return `${fileName}.conflict.${Date.now()}`;
 }

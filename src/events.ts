@@ -41,6 +41,7 @@ export const HubEventSchema = Schema.Struct({
   messageId: Schema.optional(EventIdSchema),
   paths: Schema.optional(Schema.Array(ClaimPathSchema)),
   reason: Schema.optional(UserTextSchema),
+  owner: Schema.optional(WriterIdSchema),
   state: Schema.optional(StatusStateSchema),
   summary: Schema.optional(UserTextSchema),
 });

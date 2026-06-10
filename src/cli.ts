@@ -8,11 +8,15 @@ import {
   parseMessageAddress,
   parseStatusState,
   parseUserText,
+  parseWriterId,
 } from "./domain.js";
+import { inspectLedger } from "./doctor.js";
 import { initIdentity, loadIdentity, resolveLane } from "./identity.js";
 import { materialize, materializedToJson } from "./materialize.js";
 import { streamsDir } from "./paths.js";
+import { startPeerServer } from "./server.js";
 import { appendEvent } from "./stream.js";
+import { syncFromHttpPeer } from "./sync/http.js";
 import { syncFromPeer } from "./sync/local.js";
 
 const args = process.argv.slice(2);
@@ -38,11 +42,20 @@ async function main(argv: string[]): Promise<void> {
     case "ack":
       await commandAck(rest);
       return;
+    case "handoff":
+      await commandHandoff(rest);
+      return;
+    case "note":
+      await commandNote(rest);
+      return;
     case "claim":
       await commandClaim(rest);
       return;
     case "release":
       await commandRelease(rest);
+      return;
+    case "resolve":
+      await commandResolve(rest);
       return;
     case "status":
       await commandStatus(rest);
@@ -58,6 +71,9 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "sync":
       await commandSync(rest);
+      return;
+    case "serve":
+      await commandServe(rest);
       return;
     default:
       throw new Error(`unknown command: ${command ?? "(missing)"}`);
@@ -113,6 +129,30 @@ async function commandAck(argv: string[]): Promise<void> {
   }));
 }
 
+async function commandHandoff(argv: string[]): Promise<void> {
+  const [to, ...bodyParts] = argv;
+  if (to === undefined || bodyParts.length === 0) {
+    throw new Error("usage: laser handoff <to> <body>");
+  }
+  const config = await loadIdentity(root);
+  print(await appendEvent(root, config, config.defaultLane, {
+    type: "handoff",
+    to: parseMessageAddress(to),
+    body: parseUserText(bodyParts.join(" ")),
+  }));
+}
+
+async function commandNote(argv: string[]): Promise<void> {
+  if (argv.length === 0) {
+    throw new Error("usage: laser note <body>");
+  }
+  const config = await loadIdentity(root);
+  print(await appendEvent(root, config, config.defaultLane, {
+    type: "note",
+    body: parseUserText(argv.join(" ")),
+  }));
+}
+
 async function commandClaim(argv: string[]): Promise<void> {
   const [laneRaw, pathRaw] = argv;
   if (laneRaw === undefined || pathRaw === undefined) {
@@ -139,6 +179,20 @@ async function commandRelease(argv: string[]): Promise<void> {
   }));
 }
 
+async function commandResolve(argv: string[]): Promise<void> {
+  const [laneRaw, pathRaw] = argv;
+  if (laneRaw === undefined || pathRaw === undefined) {
+    throw new Error("usage: laser resolve <lane> <path> [--owner <writer>]");
+  }
+  const config = await loadIdentity(root);
+  const owner = optionValue(argv, "--owner");
+  print(await appendEvent(root, config, parseLaneId(laneRaw), {
+    type: "claim.resolve",
+    paths: [parseClaimPath(pathRaw)],
+    ...(owner === undefined ? {} : { owner: parseWriterId(owner) }),
+  }));
+}
+
 async function commandStatus(argv: string[]): Promise<void> {
   const [laneRaw, stateRaw, ...summaryParts] = argv;
   if (laneRaw === undefined || stateRaw === undefined || summaryParts.length === 0) {
@@ -154,8 +208,10 @@ async function commandStatus(argv: string[]): Promise<void> {
 
 async function commandDoctor(): Promise<void> {
   const state = await materialize(root);
+  const inspection = await inspectLedger(root);
   print({
-    ok: state.warnings.length === 0 && state.ownership.conflicts.length === 0,
+    ok: inspection.ok && state.warnings.length === 0 && state.ownership.conflicts.length === 0,
+    diagnostics: inspection.diagnostics,
     warnings: state.warnings,
     conflicts: state.ownership.conflicts,
     dashboard: state.dashboard,
@@ -175,7 +231,16 @@ async function commandSync(argv: string[]): Promise<void> {
   if (peer === undefined) {
     throw new Error("usage: laser sync --peer <path>");
   }
-  print(await syncFromPeer(root, resolve(peer)));
+  print(peer.startsWith("http://") || peer.startsWith("https://")
+    ? await syncFromHttpPeer(root, peer)
+    : await syncFromPeer(root, resolve(peer)));
+}
+
+async function commandServe(argv: string[]): Promise<void> {
+  const port = Number(optionValue(argv, "--port") ?? "8787");
+  const server = await startPeerServer(root, port);
+  print({ url: server.url });
+  await new Promise(() => undefined);
 }
 
 function optionValue(argv: readonly string[], option: string): string | undefined {
