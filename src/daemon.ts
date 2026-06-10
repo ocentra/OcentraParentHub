@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
@@ -85,9 +86,8 @@ function daemonCommand(options: EnsureDaemonOptions): { readonly file: string; r
     return { file: process.execPath, args: [compiledCliPath, ...serveArgs] };
   }
 
-  if (process.platform === "win32") {
-    return { file: "cmd.exe", args: ["/c", "npm", "run", "ledger", "--", ...serveArgs] };
-  }
-
-  return { file: "npm", args: ["run", "ledger", "--", ...serveArgs] };
+  const require = createRequire(import.meta.url);
+  const tsxCliPath = require.resolve("tsx/cli");
+  const sourceCliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
+  return { file: process.execPath, args: [tsxCliPath, sourceCliPath, ...serveArgs] };
 }

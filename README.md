@@ -96,7 +96,7 @@ http://127.0.0.1:8787/
 
 The dashboard shows current mail, workers, active tasks, ownership claims, conflicts, lanes, heartbeat state, stream names, and top-level ledger counters. It reads from the materialized `/state` endpoint, so the page is always a preview generated from append-only events.
 
-`ensure` is the normal worktree entrypoint. It checks `/health`, starts the daemon only if needed, and launches the background server with `windowsHide` so the daemon itself does not leave a visible command prompt window. Directly running `serve` is still useful for debugging, but regular workers should use `ensure`.
+`ensure` is the normal worktree entrypoint. It checks `/health`, starts the daemon only if needed, and launches the server as a detached Node background process. On Windows, the same Node startup path suppresses a visible console window. Directly running `serve` is still useful for debugging, but regular workers should use `ensure`.
 
 If the daemon is token-protected for LAN or WAN exposure, paste the bearer token into the dashboard token field. The token is stored in browser local storage for that browser profile.
 
