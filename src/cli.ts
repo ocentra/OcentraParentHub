@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   parseClaimPath,
   parseEventId,
   parseLaneId,
   parseMessageAddress,
+  parsePeerName,
   parsePullRequestUrl,
   parseStatusState,
   parseTaskId,
@@ -19,6 +20,7 @@ import { inspectLedger } from "./doctor.js";
 import { initIdentity, loadIdentity, resolveLane } from "./identity.js";
 import { getActiveTasks, getFreeWorkers, getWorkers, materialize, materializedToJson } from "./materialize.js";
 import { streamsDir } from "./paths.js";
+import { addPeer, loadPeerRegistry, resolvePeer } from "./peers.js";
 import { compactLedger } from "./retention.js";
 import { startPeerServer } from "./server.js";
 import { appendEvent } from "./stream.js";
@@ -98,6 +100,9 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "sync":
       await commandSync(rest);
+      return;
+    case "peer":
+      await commandPeer(rest);
       return;
     case "serve":
       await commandServe(rest);
@@ -353,11 +358,56 @@ async function commandStreams(): Promise<void> {
 async function commandSync(argv: string[]): Promise<void> {
   const peer = optionValue(argv, "--peer");
   if (peer === undefined) {
-    throw new Error("usage: ledger sync --peer <path>");
+    throw new Error("usage: ledger sync --peer <path|url|alias>");
   }
-  print(peer.startsWith("http://") || peer.startsWith("https://")
-    ? await syncFromHttpPeer(root, peer, optionValue(argv, "--token") ?? process.env.LEDGER_PEER_TOKEN)
-    : await syncFromPeer(root, resolve(peer)));
+  if (isHttpPeer(peer)) {
+    print(await syncFromHttpPeer(root, peer, optionValue(argv, "--token") ?? process.env.LEDGER_PEER_TOKEN));
+    return;
+  }
+  if (isLocalPeerPath(peer) || await pathExists(resolve(peer))) {
+    print(await syncFromPeer(root, resolve(peer)));
+    return;
+  }
+  const resolved = await resolvePeer(root, peer);
+  print(await syncFromHttpPeer(root, resolved.url, optionValue(argv, "--token") ?? resolved.token ?? process.env.LEDGER_PEER_TOKEN));
+}
+
+async function commandPeer(argv: string[]): Promise<void> {
+  const [subcommand, nameOrUrl, url] = argv;
+  switch (subcommand) {
+    case "add": {
+      if (nameOrUrl === undefined || url === undefined) {
+        throw new Error("usage: ledger peer add <name> <url> [--token-env <envName>]");
+      }
+      const tokenEnv = optionValue(argv, "--token-env");
+      print(await addPeer(root, {
+        name: nameOrUrl,
+        url,
+        ...(tokenEnv === undefined ? {} : { tokenEnv }),
+      }));
+      return;
+    }
+    case "list":
+      print(await loadPeerRegistry(root));
+      return;
+    case "health": {
+      if (nameOrUrl === undefined) {
+        throw new Error("usage: ledger peer health <name|url>");
+      }
+      const resolved = await resolvePeer(root, nameOrUrl);
+      const response = await fetch(new URL("/health", resolved.url), requestInit(optionValue(argv, "--token") ?? resolved.token ?? process.env.LEDGER_PEER_TOKEN));
+      print({
+        peer: isHttpPeer(nameOrUrl) ? parsePeerName("direct") : parsePeerName(nameOrUrl),
+        url: resolved.url,
+        ok: response.ok,
+        status: response.status,
+        body: response.ok ? await response.json() : await response.text(),
+      });
+      return;
+    }
+    default:
+      throw new Error("usage: ledger peer <add|list|health>");
+  }
 }
 
 async function commandServe(argv: string[]): Promise<void> {
@@ -404,6 +454,34 @@ function summaryWithoutOptions(parts: readonly string[]): string {
     }
   }
   return summary.join(" ");
+}
+
+function isHttpPeer(peer: string): boolean {
+  return peer.startsWith("http://") || peer.startsWith("https://");
+}
+
+function isLocalPeerPath(peer: string): boolean {
+  return peer.includes(":\\")
+    || peer.includes(":/")
+    || peer.startsWith(".")
+    || peer.startsWith("/")
+    || peer.startsWith("\\")
+    || peer.includes("\\");
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function requestInit(token: string | undefined): RequestInit | undefined {
+  return token === undefined || token.length === 0
+    ? undefined
+    : { headers: { authorization: `Bearer ${token}` } };
 }
 
 function print(value: unknown): void {

@@ -101,6 +101,22 @@ export const PullRequestUrlSchema = Schema.String.pipe(
 );
 export type PullRequestUrl = Schema.Schema.Type<typeof PullRequestUrlSchema>;
 
+export const PeerNameSchema = Schema.String.pipe(
+  Schema.minLength(1),
+  Schema.maxLength(80),
+  Schema.pattern(identityPattern),
+  Schema.brand("PeerName"),
+);
+export type PeerName = Schema.Schema.Type<typeof PeerNameSchema>;
+
+export const PeerUrlSchema = Schema.String.pipe(
+  Schema.minLength(8),
+  Schema.maxLength(500),
+  Schema.pattern(/^https?:\/\/.+/),
+  Schema.brand("PeerUrl"),
+);
+export type PeerUrl = Schema.Schema.Type<typeof PeerUrlSchema>;
+
 export const WorkerStateSchema = Schema.Literal(
   "idle",
   "started",
@@ -174,6 +190,8 @@ export const parseMessageAddress = Schema.decodeUnknownSync(MessageAddressSchema
 export const parseUserText = Schema.decodeUnknownSync(UserTextSchema);
 export const parseTaskId = Schema.decodeUnknownSync(TaskIdSchema);
 export const parsePullRequestUrl = Schema.decodeUnknownSync(PullRequestUrlSchema);
+export const parsePeerName = Schema.decodeUnknownSync(PeerNameSchema);
+export const parsePeerUrl = Schema.decodeUnknownSync(PeerUrlSchema);
 export const parseWorkerState = Schema.decodeUnknownSync(WorkerStateSchema);
 export const parseTaskState = Schema.decodeUnknownSync(TaskStateSchema);
 export const parseStatusState = Schema.decodeUnknownSync(StatusStateSchema);

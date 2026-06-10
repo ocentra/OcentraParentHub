@@ -75,6 +75,9 @@ npm run ledger -- ensure --port 8787
 npm run ledger -- sync --peer E:\SomeOtherHub
 npm run ledger -- serve --port 8787
 npm run ledger -- sync --peer http://127.0.0.1:8787
+npm run ledger -- peer add ocentrahub http://ocentrahub:8787
+npm run ledger -- peer health ocentrahub
+npm run ledger -- sync --peer ocentrahub
 ```
 
 ## Materialized Semantics
@@ -132,6 +135,25 @@ Peers can then copy missing stream prefixes:
 ```powershell
 npm run ledger -- sync --peer http://127.0.0.1:8787
 ```
+
+For same-machine worktrees, use localhost. For LAN, use a stable hostname, router DNS entry, hosts-file entry, or mesh DNS name instead of spreading raw IP addresses through scripts:
+
+```powershell
+npm run ledger -- peer add ocentrahub http://ocentrahub:8787
+npm run ledger -- peer health ocentrahub
+npm run ledger -- sync --peer ocentrahub
+```
+
+For WAN, expose the daemon through a tunnel or mesh network endpoint and keep the same alias:
+
+```powershell
+$env:LEDGER_PEER_TOKEN="shared-secret"
+npm run ledger -- peer add ocentrahub https://ocentrahub.example.com --token-env LEDGER_PEER_TOKEN
+npm run ledger -- peer health ocentrahub
+npm run ledger -- sync --peer ocentrahub
+```
+
+The alias registry is local operator config stored in `peers.json` under `LEDGER_ROOT`; it is ignored by git and is not canonical ledger truth. If a LAN IP or tunnel URL changes, update the alias once. Worker scripts and worktrees keep using `ocentrahub`.
 
 With a token-protected peer:
 

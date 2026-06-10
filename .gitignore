@@ -8,4 +8,5 @@ archive/
 runtime/
 views/
 index/
+peers.json
 streams/*.lock

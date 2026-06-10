@@ -16,6 +16,7 @@ import {
 import { inspectLedger } from "./doctor.js";
 import { initIdentity } from "./identity.js";
 import { materialize } from "./materialize.js";
+import { addPeer, loadPeerRegistry, resolvePeer } from "./peers.js";
 import { compactLedger } from "./retention.js";
 import { streamPath } from "./paths.js";
 import { startPeerServer } from "./server.js";
@@ -287,6 +288,28 @@ describe("Ocentra Parent Hub ledger", () => {
       expect((await materialize(local)).dashboard.eventCount).toBe(1);
     } finally {
       await server.close();
+    }
+  });
+
+  it("stores stable peer aliases and resolves token env values", async () => {
+    const root = await tempRoot();
+    await addPeer(root, {
+      name: "ocentrahub",
+      url: "http://ocentrahub:8787",
+      tokenEnv: "LEDGER_PEER_TOKEN_TEST",
+    });
+    process.env.LEDGER_PEER_TOKEN_TEST = "secret";
+    try {
+      const registry = await loadPeerRegistry(root);
+      expect(registry.peers[0]?.name).toBe("ocentrahub");
+      expect(registry.peers[0]?.url).toBe("http://ocentrahub:8787");
+
+      const resolved = await resolvePeer(root, "ocentrahub");
+      expect(resolved.name).toBe("ocentrahub");
+      expect(resolved.url).toBe("http://ocentrahub:8787");
+      expect(resolved.token).toBe("secret");
+    } finally {
+      delete process.env.LEDGER_PEER_TOKEN_TEST;
     }
   });
 
