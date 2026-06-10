@@ -44,6 +44,7 @@ export const HubEventSchema = Schema.Struct({
   owner: Schema.optional(WriterIdSchema),
   state: Schema.optional(StatusStateSchema),
   summary: Schema.optional(UserTextSchema),
+  ttlSeconds: Schema.optional(Schema.Number),
 });
 export type HubEvent = Schema.Schema.Type<typeof HubEventSchema>;
 

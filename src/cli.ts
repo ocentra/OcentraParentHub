@@ -34,6 +34,9 @@ async function main(argv: string[]): Promise<void> {
     case "lane":
       await commandLane(rest);
       return;
+    case "start":
+      await commandStart(rest);
+      return;
     case "msg":
       await commandMessage(rest);
       return;
@@ -100,6 +103,31 @@ async function commandLane(argv: string[]): Promise<void> {
   }
   const config = await loadIdentity(root);
   print(await appendEvent(root, config, parseLaneId(lane), { type: "lane.register" }));
+}
+
+async function commandStart(argv: string[]): Promise<void> {
+  const laneRaw = argv[0];
+  const config = await loadIdentity(root);
+  const lane = resolveLane(config, laneRaw);
+  const ttlSeconds = Number(optionValue(argv, "--ttl-seconds") ?? "180");
+  const summary = optionValue(argv, "--summary") ?? "lane started";
+  const registered = await appendEvent(root, config, lane, { type: "lane.register" });
+  const heartbeat = await appendEvent(root, config, lane, {
+    type: "heartbeat",
+    state: parseStatusState("online"),
+    summary: parseUserText(summary),
+    ttlSeconds,
+  });
+  const state = await materialize(root);
+  const inbox = state.lanes.get(lane)?.inbox.filter((item) => item.ackedBy.length === 0) ?? [];
+  print({
+    lane,
+    registeredEventId: registered.id,
+    heartbeatEventId: heartbeat.id,
+    unreadCount: inbox.length,
+    inbox,
+    staleHeartbeatCount: state.dashboard.staleHeartbeatCount,
+  });
 }
 
 async function commandMessage(argv: string[]): Promise<void> {

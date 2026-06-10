@@ -92,6 +92,7 @@ export const StatusStateSchema = Schema.Literal(
   "ready",
   "done",
   "handoff",
+  "online",
 ).pipe(Schema.brand("StatusState"));
 export type StatusState = Schema.Schema.Type<typeof StatusStateSchema>;
 
@@ -103,6 +104,7 @@ export const EventTypeSchema = Schema.Literal(
   "release",
   "claim.resolve",
   "status",
+  "heartbeat",
   "handoff",
   "note",
 ).pipe(Schema.brand("EventType"));

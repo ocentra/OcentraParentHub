@@ -49,6 +49,7 @@ The `hash` is computed over every envelope field except `hash`. Events are never
 
 ```powershell
 npm run laser -- init ocentra-parent --lane primary
+npm run laser -- start codex-b --ttl-seconds 180
 npm run laser -- lane register codex-b
 npm run laser -- msg codex-b "ready for review"
 npm run laser -- inbox codex-b
@@ -74,6 +75,7 @@ npm run laser -- sync --peer http://127.0.0.1:8787
 - **Inbox:** `message` events create inbox items. `ack` events acknowledge explicit event IDs by actor identity.
 - **Ownership:** `claim`, `release`, and `claim.resolve` events drive ownership. Overlapping active claim paths become conflicts until released or resolved.
 - **Status:** `status` events carry low-frequency lane state. V1 intentionally avoids replacing Codex internal heartbeat.
+- **Heartbeat/startup:** `start` writes `lane.register` and `heartbeat`, materializes views, and returns unread inbox for that lane.
 - **Doctor:** `doctor` validates stream hashes, sequence continuity, malformed lines, materialized warnings, and ownership conflicts.
 
 ## Retention And Compaction
@@ -139,3 +141,4 @@ The V1 scaffold covers:
 - HTTP peer sync
 - hash-chain tamper detection
 - cold stream compaction into immutable archive segments
+- startup heartbeat and unread inbox check

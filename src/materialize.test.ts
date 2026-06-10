@@ -98,6 +98,27 @@ describe("Ocentra Parent Hub ledger", () => {
     expect(lane?.status?.state).toBe("working");
   });
 
+  it("materializes heartbeat freshness for lane startup", async () => {
+    const root = await tempRoot();
+    const config = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "codex-b",
+      nodeId: "node-gamedev",
+      nodeName: "GAMEDEV",
+    });
+    await appendEvent(root, config, config.defaultLane, {
+      type: "heartbeat",
+      state: parseStatusState("online"),
+      summary: parseUserText("lane started"),
+      ttlSeconds: 180,
+    });
+
+    const lane = (await materialize(root)).lanes.get(config.defaultLane);
+    expect(lane?.heartbeat?.state).toBe("online");
+    expect(lane?.heartbeat?.stale).toBe(false);
+  });
+
   it("routes addressed messages to the target lane inbox", async () => {
     const root = await tempRoot();
     const config = await initIdentity({

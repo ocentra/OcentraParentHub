@@ -155,6 +155,7 @@ export type EventCommand =
   | { type: "release"; paths: ClaimPath[] }
   | { type: "claim.resolve"; paths: ClaimPath[]; owner?: WriterId }
   | { type: "status"; state: StatusState; summary: UserText }
+  | { type: "heartbeat"; state: StatusState; summary: UserText; ttlSeconds: number }
   | { type: "handoff"; to: MessageAddress; body: UserText }
   | { type: "note"; body: UserText };
 
@@ -221,6 +222,13 @@ function eventInput(config: HubConfig, lane: LaneId, command: EventCommand): New
       };
     case "status":
       return { ...base, state: command.state, summary: command.summary };
+    case "heartbeat":
+      return {
+        ...base,
+        state: command.state,
+        summary: command.summary,
+        ttlSeconds: command.ttlSeconds,
+      };
     case "handoff":
       return { ...base, to: command.to, body: command.body };
     case "note":

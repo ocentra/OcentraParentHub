@@ -24,6 +24,7 @@ export type DashboardView = {
   readonly duplicateCount: number;
   readonly laneCount: number;
   readonly inboxCount: number;
+  readonly staleHeartbeatCount: number;
   readonly conflictCount: number;
   readonly generatedAt: string;
 };
@@ -38,6 +39,7 @@ export type LaneView = {
   readonly registeredWriters: readonly WriterId[];
   readonly inbox: readonly InboxItem[];
   readonly status?: StatusView;
+  readonly heartbeat?: HeartbeatView;
   readonly ackedMessageIds: readonly string[];
 };
 
@@ -55,6 +57,16 @@ export type StatusView = {
   readonly summary: string;
   readonly writer: WriterId;
   readonly ts: string;
+};
+
+export type HeartbeatView = {
+  readonly state: string;
+  readonly summary: string;
+  readonly writer: WriterId;
+  readonly ts: string;
+  readonly ttlSeconds: number;
+  readonly expiresAt: string;
+  readonly stale: boolean;
 };
 
 export type ClaimView = {
@@ -121,6 +133,19 @@ export async function materialize(root: string): Promise<MaterializedHub> {
         ts: event.ts,
       };
     }
+    if (event.type === "heartbeat" && event.state !== undefined && event.summary !== undefined) {
+      const ttlSeconds = event.ttlSeconds ?? 180;
+      const expiresAt = new Date(Date.parse(event.ts) + ttlSeconds * 1000).toISOString();
+      lane.heartbeat = {
+        state: event.state,
+        summary: event.summary,
+        writer: event.writer,
+        ts: event.ts,
+        ttlSeconds,
+        expiresAt,
+        stale: Date.parse(expiresAt) < Date.now(),
+      };
+    }
     if (event.type === "claim" && event.paths !== undefined) {
       for (const path of event.paths) {
         const claim: ClaimView = {
@@ -167,6 +192,7 @@ export async function materialize(root: string): Promise<MaterializedHub> {
     duplicateCount,
     laneCount: frozenLanes.size,
     inboxCount: [...frozenLanes.values()].reduce((count, lane) => count + lane.inbox.length, 0),
+    staleHeartbeatCount: [...frozenLanes.values()].filter((lane) => lane.heartbeat?.stale === true).length,
     conflictCount: ownership.conflicts.length,
     generatedAt: new Date().toISOString(),
   };
@@ -205,6 +231,7 @@ type MutableLaneView = {
   readonly registeredWriters: Set<WriterId>;
   inbox: InboxItem[];
   status?: StatusView;
+  heartbeat?: HeartbeatView;
   ackedMessageIds: string[];
 };
 
@@ -224,6 +251,7 @@ function freezeLanes(lanes: ReadonlyMap<LaneId, MutableLaneView>): ReadonlyMap<L
         registeredWriters: [...lane.registeredWriters],
         inbox: lane.inbox,
         ...(lane.status === undefined ? {} : { status: lane.status }),
+        ...(lane.heartbeat === undefined ? {} : { heartbeat: lane.heartbeat }),
         ackedMessageIds: lane.ackedMessageIds,
       },
     ]),
