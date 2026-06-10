@@ -278,10 +278,12 @@ export async function materialize(root: string): Promise<MaterializedHub> {
     }
   }
 
-  for (const lane of lanes.values()) {
+  for (const [laneId, lane] of lanes.entries()) {
     lane.inbox = lane.inbox.map((item) => ({
       ...item,
-      ackedBy: [...(acks.get(item.id) ?? new Set<WriterId>())],
+      ackedBy: [...(acks.get(item.id) ?? new Set<WriterId>())].filter((writer) => {
+        return writers.get(writer)?.lane === laneId;
+      }),
     }));
   }
 

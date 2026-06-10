@@ -14,6 +14,7 @@ import {
   writerId,
 } from "./domain.js";
 import { inspectLedger } from "./doctor.js";
+import { guardLedger } from "./guard.js";
 import { initIdentity } from "./identity.js";
 import { materialize } from "./materialize.js";
 import { addPeer, loadPeerRegistry, resolvePeer } from "./peers.js";
@@ -24,6 +25,7 @@ import { startPeerServer } from "./server.js";
 import { appendEvent } from "./stream.js";
 import { syncFromHttpPeer } from "./sync/http.js";
 import { syncFromPeer } from "./sync/local.js";
+import { spawnSync } from "node:child_process";
 
 describe("Ocentra Parent Hub ledger", () => {
   it("keeps default ledger state outside the code checkout", () => {
@@ -148,6 +150,116 @@ describe("Ocentra Parent Hub ledger", () => {
     const state = await materialize(root);
     expect(state.lanes.get(parseLaneId("codex-b"))?.inbox).toHaveLength(1);
     expect(state.lanes.get(config.defaultLane)?.inbox).toHaveLength(0);
+  });
+
+  it("guards worker lanes against unread mail and unclaimed changed paths", async () => {
+    const root = await tempRoot();
+    const config = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-boss",
+      nodeName: "BOSS",
+    });
+    const message = await appendEvent(root, config, config.defaultLane, {
+      type: "message",
+      to: parseMessageAddress("codex-b"),
+      body: parseUserText("claim before editing"),
+    });
+
+    const blockedByMail = await guardLedger(root, {
+      lane: "codex-b",
+      changedPaths: ["src/auth/login.ts"],
+    });
+    expect(blockedByMail.ok).toBe(false);
+    expect(blockedByMail.findings.join("\n")).toContain("unread ledger message");
+
+    await appendEvent(root, config, parseLaneId("codex-b"), {
+      type: "ack",
+      messageId: message.id,
+    });
+    const blockedByClaim = await guardLedger(root, {
+      lane: "codex-b",
+      changedPaths: ["src/auth/login.ts"],
+    });
+    expect(blockedByClaim.ok).toBe(false);
+    expect(blockedByClaim.findings.join("\n")).toContain("no active ledger claim");
+
+    await appendEvent(root, config, parseLaneId("codex-b"), {
+      type: "claim",
+      paths: [parseClaimPath("src/auth/**")],
+    });
+    const passed = await guardLedger(root, {
+      lane: "codex-b",
+      changedPaths: ["src/auth/login.ts"],
+    });
+    expect(passed.ok).toBe(true);
+  });
+
+  it("keeps message acknowledgement scoped to the acknowledging lane", async () => {
+    const root = await tempRoot();
+    const config = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-boss",
+      nodeName: "BOSS",
+    });
+    const message = await appendEvent(root, config, config.defaultLane, {
+      type: "message",
+      to: parseMessageAddress("codex-b"),
+      body: parseUserText("worker must ack this"),
+    });
+
+    await appendEvent(root, config, config.defaultLane, {
+      type: "ack",
+      messageId: message.id,
+    });
+    const stillUnread = await guardLedger(root, { lane: "codex-b" });
+    expect(stillUnread.ok).toBe(false);
+    expect(stillUnread.findings.join("\n")).toContain("unread ledger message");
+
+    await appendEvent(root, config, parseLaneId("codex-b"), {
+      type: "ack",
+      messageId: message.id,
+    });
+    const workerRead = await guardLedger(root, { lane: "codex-b" });
+    expect(workerRead.ok).toBe(true);
+  });
+
+  it("lets the CLI acknowledge a message as an explicit lane", async () => {
+    const root = await tempRoot();
+    const config = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-boss",
+      nodeName: "BOSS",
+    });
+    const message = await appendEvent(root, config, config.defaultLane, {
+      type: "message",
+      to: parseMessageAddress("codex-b"),
+      body: parseUserText("ack through cli"),
+    });
+
+    const result = spawnSync(process.execPath, [
+      "--import",
+      "tsx",
+      "src/cli.ts",
+      "ack",
+      "--lane",
+      "codex-b",
+      message.id,
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, LEDGER_ROOT: root },
+    });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+
+    const workerRead = await guardLedger(root, { lane: "codex-b" });
+    expect(workerRead.ok).toBe(true);
   });
 
   it("detects overlapping ownership conflicts after local sync", async () => {

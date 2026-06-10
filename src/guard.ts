@@ -1,0 +1,81 @@
+import { LaneId, parseLaneId } from "./domain.js";
+import { inspectLedger, LedgerDiagnostic } from "./doctor.js";
+import { ClaimView, materialize } from "./materialize.js";
+
+export type GuardResult = {
+  readonly ok: boolean;
+  readonly lane: LaneId;
+  readonly findings: readonly string[];
+  readonly diagnostics: readonly LedgerDiagnostic[];
+};
+
+export async function guardLedger(
+  root: string,
+  input: {
+    readonly lane: string;
+    readonly changedPaths?: readonly string[];
+    readonly allowPrimaryWithoutClaims?: boolean;
+  },
+): Promise<GuardResult> {
+  const lane = parseLaneId(input.lane);
+  const state = await materialize(root);
+  const inspection = await inspectLedger(root);
+  const findings: string[] = [];
+  const laneView = state.lanes.get(lane);
+  const unread = laneView?.inbox.filter((item) => item.ackedBy.length === 0) ?? [];
+  if (lane !== "primary" && unread.length > 0) {
+    findings.push(`lane ${lane} has ${unread.length} unread ledger message(s)`);
+  }
+  for (const conflict of state.ownership.conflicts) {
+    findings.push(`ownership conflict: ${conflict.paths.join(", ")} owned by ${conflict.lanes.join(", ")}`);
+  }
+
+  const changedPaths = (input.changedPaths ?? [])
+    .map(normalizeRepoPath)
+    .filter((path) => path.length > 0);
+  if (changedPaths.length > 0 && (lane !== "primary" || input.allowPrimaryWithoutClaims !== true)) {
+    const laneClaims = state.ownership.activeClaims.filter((claim) => claim.lane === lane);
+    if (laneClaims.length === 0) {
+      findings.push(`lane ${lane} has changed files but no active ledger claim`);
+    } else {
+      for (const path of changedPaths) {
+        if (!laneClaims.some((claim) => claimMatchesPath(claim, path))) {
+          findings.push(`changed path ${path} is outside active ledger claims for lane ${lane}`);
+        }
+      }
+    }
+  }
+
+  for (const diagnostic of inspection.diagnostics) {
+    if (diagnostic.level === "error") {
+      findings.push(`${diagnostic.stream}: ${diagnostic.message}`);
+    }
+  }
+
+  return {
+    ok: findings.length === 0,
+    lane,
+    findings,
+    diagnostics: inspection.diagnostics,
+  };
+}
+
+function claimMatchesPath(claim: ClaimView, path: string): boolean {
+  return claim.paths.some((claimPath) => pathMatchesClaim(path, normalizeRepoPath(claimPath)));
+}
+
+function pathMatchesClaim(path: string, claimPath: string): boolean {
+  if (claimPath.includes("*")) {
+    return wildcardToRegExp(claimPath).test(path);
+  }
+  return path === claimPath || path.startsWith(`${claimPath}/`);
+}
+
+function wildcardToRegExp(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/gu, "\\$&").replace(/\*/gu, ".*");
+  return new RegExp(`^${escaped}$`, "u");
+}
+
+function normalizeRepoPath(path: string): string {
+  return path.replace(/\\/gu, "/").replace(/^\.\//u, "").toLowerCase();
+}

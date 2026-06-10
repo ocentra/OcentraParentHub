@@ -17,6 +17,7 @@ import {
 } from "./domain.js";
 import { ensureDaemon } from "./daemon.js";
 import { inspectLedger } from "./doctor.js";
+import { guardLedger } from "./guard.js";
 import { initIdentity, loadIdentity, resolveLane } from "./identity.js";
 import { getActiveTasks, getFreeWorkers, getWorkers, materialize, materializedToJson } from "./materialize.js";
 import { streamsDir } from "./paths.js";
@@ -75,6 +76,9 @@ async function main(argv: string[]): Promise<void> {
     case "status":
       await commandStatus(rest);
       return;
+    case "heartbeat":
+      await commandHeartbeat(rest);
+      return;
     case "task":
       await commandTask(rest);
       return;
@@ -98,6 +102,9 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "doctor":
       await commandDoctor();
+      return;
+    case "guard":
+      await commandGuard(rest);
       return;
     case "streams":
       await commandStreams();
@@ -185,12 +192,13 @@ async function commandInbox(argv: string[]): Promise<void> {
 }
 
 async function commandAck(argv: string[]): Promise<void> {
-  const [messageId] = argv;
+  const laneRaw = optionValue(argv, "--lane");
+  const messageId = firstPositional(argv, ["--lane"]);
   if (messageId === undefined) {
-    throw new Error("usage: ledger ack <messageId>");
+    throw new Error("usage: ledger ack [--lane <lane>] <messageId>");
   }
   const config = await loadIdentity(root);
-  print(await appendEvent(root, config, config.defaultLane, {
+  print(await appendEvent(root, config, resolveLane(config, laneRaw), {
     type: "ack",
     messageId: parseEventId(messageId),
   }));
@@ -273,6 +281,21 @@ async function commandStatus(argv: string[]): Promise<void> {
   }));
 }
 
+async function commandHeartbeat(argv: string[]): Promise<void> {
+  const [laneRaw, stateRaw, ...summaryParts] = argv;
+  if (laneRaw === undefined || stateRaw === undefined || summaryParts.length === 0) {
+    throw new Error("usage: ledger heartbeat <lane> <state> <summary> [--ttl-seconds <seconds>]");
+  }
+  const config = await loadIdentity(root);
+  const ttlSeconds = Number(optionValue(argv, "--ttl-seconds") ?? "180");
+  print(await appendEvent(root, config, resolveLane(config, laneRaw), {
+    type: "heartbeat",
+    state: parseStatusState(stateRaw),
+    summary: parseUserText(summaryWithoutOptions(summaryParts)),
+    ttlSeconds,
+  }));
+}
+
 async function commandTask(argv: string[]): Promise<void> {
   const [laneRaw, taskIdRaw, stateRaw, ...summaryParts] = argv;
   if (laneRaw === undefined || taskIdRaw === undefined || stateRaw === undefined || summaryParts.length === 0) {
@@ -309,15 +332,16 @@ async function commandWorker(argv: string[]): Promise<void> {
 
 async function commandReport(argv: string[]): Promise<void> {
   const taskIdRaw = optionValue(argv, "--task-id");
+  const laneRaw = optionValue(argv, "--lane");
   const summaryParts = argv.filter((arg, index) => {
     const previous = argv[index - 1];
-    return !arg.startsWith("--") && previous !== "--task-id";
+    return !arg.startsWith("--") && previous !== "--task-id" && previous !== "--lane";
   });
   if (summaryParts.length === 0) {
-    throw new Error("usage: ledger report [--task-id <taskId>] <summary>");
+    throw new Error("usage: ledger report [--lane <lane>] [--task-id <taskId>] <summary>");
   }
   const config = await loadIdentity(root);
-  print(await appendEvent(root, config, config.defaultLane, {
+  print(await appendEvent(root, config, resolveLane(config, laneRaw), {
     type: "report",
     summary: parseUserText(summaryParts.join(" ")),
     ...(taskIdRaw === undefined ? {} : { taskId: parseTaskId(taskIdRaw) }),
@@ -344,6 +368,21 @@ async function commandDoctor(): Promise<void> {
     conflicts: state.ownership.conflicts,
     dashboard: state.dashboard,
   });
+}
+
+async function commandGuard(argv: string[]): Promise<void> {
+  const config = await loadIdentity(root);
+  const lane = optionValue(argv, "--lane") ?? config.defaultLane;
+  const changed = optionValue(argv, "--changed");
+  const result = await guardLedger(root, {
+    lane,
+    changedPaths: changed === undefined ? [] : splitPathList(changed),
+    allowPrimaryWithoutClaims: argv.includes("--allow-primary-without-claims"),
+  });
+  print(result);
+  if (!result.ok) {
+    process.exitCode = 1;
+  }
 }
 
 async function commandCompact(argv: string[]): Promise<void> {
@@ -445,11 +484,28 @@ function optionValue(argv: readonly string[], option: string): string | undefine
   return value === undefined || value.startsWith("--") ? undefined : value;
 }
 
+function firstPositional(argv: readonly string[], optionsWithValues: readonly string[]): string | undefined {
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === undefined) {
+      continue;
+    }
+    if (optionsWithValues.includes(arg)) {
+      index += 1;
+      continue;
+    }
+    if (!arg.startsWith("--")) {
+      return arg;
+    }
+  }
+  return undefined;
+}
+
 function summaryWithoutOptions(parts: readonly string[]): string {
   const summary: string[] = [];
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
-    if (part === "--title" || part === "--pr-url" || part === "--task-id") {
+    if (part === "--title" || part === "--pr-url" || part === "--task-id" || part === "--ttl-seconds") {
       index += 1;
       continue;
     }
@@ -458,6 +514,13 @@ function summaryWithoutOptions(parts: readonly string[]): string {
     }
   }
   return summary.join(" ");
+}
+
+function splitPathList(value: string): readonly string[] {
+  return value
+    .split(/[,\n]/u)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 function isHttpPeer(peer: string): boolean {
