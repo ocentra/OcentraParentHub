@@ -14,6 +14,7 @@ import {
   parseWorkerState,
   parseWriterId,
 } from "./domain.js";
+import { ensureDaemon } from "./daemon.js";
 import { inspectLedger } from "./doctor.js";
 import { initIdentity, loadIdentity, resolveLane } from "./identity.js";
 import { getActiveTasks, getFreeWorkers, getWorkers, materialize, materializedToJson } from "./materialize.js";
@@ -100,6 +101,9 @@ async function main(argv: string[]): Promise<void> {
       return;
     case "serve":
       await commandServe(rest);
+      return;
+    case "ensure":
+      await commandEnsure(rest);
       return;
     default:
       throw new Error(`unknown command: ${command ?? "(missing)"}`);
@@ -367,6 +371,18 @@ async function commandServe(argv: string[]): Promise<void> {
   });
   print({ url: server.url, commandApi: true, authRequired: token !== undefined });
   await new Promise(() => undefined);
+}
+
+async function commandEnsure(argv: string[]): Promise<void> {
+  const port = Number(optionValue(argv, "--port") ?? process.env.LEDGER_PORT ?? "8787");
+  const host = optionValue(argv, "--host") ?? process.env.LEDGER_HOST ?? "127.0.0.1";
+  const token = optionValue(argv, "--token") ?? process.env.LEDGER_HTTP_TOKEN;
+  print(await ensureDaemon({
+    root,
+    port,
+    host,
+    ...(token === undefined ? {} : { token }),
+  }));
 }
 
 function optionValue(argv: readonly string[], option: string): string | undefined {

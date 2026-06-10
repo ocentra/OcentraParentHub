@@ -71,6 +71,7 @@ npm run ledger -- materialize
 npm run ledger -- doctor
 npm run ledger -- streams
 npm run ledger -- compact --keep-latest 250
+npm run ledger -- ensure --port 8787
 npm run ledger -- sync --peer E:\SomeOtherHub
 npm run ledger -- serve --port 8787
 npm run ledger -- sync --peer http://127.0.0.1:8787
@@ -101,6 +102,17 @@ npm run ledger -- compact --keep-latest 250
 Compaction moves cold stream prefixes from `streams/<writer>.ndjson` into immutable archive segments under `archive/streams/<writer>.ndjson/`. The hot stream keeps the most recent suffix so local sync and normal inspection stay small. Materialization and `doctor` read both archive segments and hot streams, so rebuildable truth is preserved.
 
 ## V2 HTTP Peer Sync
+
+Run one ledger daemon per PC per hub. Worktrees should reuse it.
+
+Any worktree can ensure the local daemon is up:
+
+```powershell
+$env:LEDGER_ROOT="E:\OcentraLedger\ocentra-parent"
+npm run ledger -- ensure --port 8787
+```
+
+`ensure` checks `GET /health`. If the daemon is already running, it returns the existing URL. If not, it starts `ledger serve` for the same `LEDGER_ROOT`, writes a PID file under `runtime/`, and waits for health.
 
 Every node can expose its local ledger as a peer and command endpoint:
 

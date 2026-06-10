@@ -5,6 +5,7 @@ data/
 identity/
 streams/
 archive/
+runtime/
 views/
 index/
 streams/*.lock
