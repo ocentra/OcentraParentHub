@@ -18,6 +18,7 @@ import { initIdentity } from "./identity.js";
 import { materialize } from "./materialize.js";
 import { addPeer, loadPeerRegistry, resolvePeer } from "./peers.js";
 import { compactLedger } from "./retention.js";
+import { defaultLedgerRoot, resolveLedgerRoot } from "./root.js";
 import { streamPath } from "./paths.js";
 import { startPeerServer } from "./server.js";
 import { appendEvent } from "./stream.js";
@@ -25,6 +26,12 @@ import { syncFromHttpPeer } from "./sync/http.js";
 import { syncFromPeer } from "./sync/local.js";
 
 describe("Ocentra Parent Hub ledger", () => {
+  it("keeps default ledger state outside the code checkout", () => {
+    const explicitRoot = join(tmpdir(), "ledger-state");
+    expect(resolveLedgerRoot({})).toBe(defaultLedgerRoot());
+    expect(resolveLedgerRoot({ LEDGER_ROOT: explicitRoot })).toBe(explicitRoot);
+  });
+
   it("appends events with stream sequence and hash continuity", async () => {
     const root = await tempRoot();
     const config = await initIdentity({

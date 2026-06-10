@@ -2,7 +2,15 @@
 
 Offline-first decentralized lane sync and event ledger for Ocentra Parent coordination.
 
-This repository is intentionally separate from the Ocentra Parent product repo. The product repo should contain code, docs, and tools. Live hub state belongs here or in peer-local hub stores derived from this project.
+This repository is intentionally separate from the Ocentra Parent product repo. Product repos should contain code, docs, and tools only. Live hub state should live in a separate ledger root selected by `LEDGER_ROOT`.
+
+If `LEDGER_ROOT` is not set, the CLI uses a cross-platform Node default under the current user's home directory:
+
+```txt
+~/.ocentra/ledger/ocentra-parent
+```
+
+The code checkout remains git-managed source. The ledger root contains node identity, append-only NDJSON streams, local peer aliases, archives, runtime PID files, and disposable materialized views.
 
 ## Direction
 
@@ -49,6 +57,7 @@ The `hash` is computed over every envelope field except `hash`. Events are never
 
 ```powershell
 npm run ledger -- init ocentra-parent --lane primary
+npm run ledger -- root
 npm run ledger -- start codex-b --ttl-seconds 180
 npm run ledger -- lane register codex-b
 npm run ledger -- msg codex-b "ready for review"
@@ -85,6 +94,7 @@ npm run ledger -- sync --peer ocentrahub
 The ledger daemon serves an operator dashboard at its root URL:
 
 ```powershell
+$env:LEDGER_ROOT="E:\OcentraLedger\ocentra-parent"
 npm run ledger -- ensure --port 8787
 ```
 

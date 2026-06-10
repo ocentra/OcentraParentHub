@@ -22,13 +22,14 @@ import { getActiveTasks, getFreeWorkers, getWorkers, materialize, materializedTo
 import { streamsDir } from "./paths.js";
 import { addPeer, loadPeerRegistry, resolvePeer } from "./peers.js";
 import { compactLedger } from "./retention.js";
+import { resolveLedgerRoot } from "./root.js";
 import { startPeerServer } from "./server.js";
 import { appendEvent } from "./stream.js";
 import { syncFromHttpPeer } from "./sync/http.js";
 import { syncFromPeer } from "./sync/local.js";
 
 const args = process.argv.slice(2);
-const root = resolve(process.env.LEDGER_ROOT ?? process.env.LASER_ROOT ?? ".");
+const root = resolveLedgerRoot();
 
 await main(args);
 
@@ -37,6 +38,9 @@ async function main(argv: string[]): Promise<void> {
   switch (command) {
     case "init":
       await commandInit(rest);
+      return;
+    case "root":
+      print({ root });
       return;
     case "lane":
       await commandLane(rest);
