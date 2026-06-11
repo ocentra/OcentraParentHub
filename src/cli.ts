@@ -21,6 +21,7 @@ import { inspectLedger } from "./doctor.js";
 import { guardLedger } from "./guard.js";
 import { initIdentity, loadIdentity, resolveLane } from "./identity.js";
 import { getActiveTasks, getFreeWorkers, getWorkers, materialize, materializedToJson } from "./materialize.js";
+import { notify } from "./notify.js";
 import { streamsDir } from "./paths.js";
 import { addPeer, loadPeerRegistry, resolvePeer } from "./peers.js";
 import { compactLedger } from "./retention.js";
@@ -101,6 +102,9 @@ async function main(argv: string[]): Promise<void> {
     case "materialize":
       print(materializedToJson(await materialize(root)));
       return;
+    case "notify":
+      await commandNotify(rest);
+      return;
     case "compact":
       await commandCompact(rest);
       return;
@@ -127,6 +131,32 @@ async function main(argv: string[]): Promise<void> {
       return;
     default:
       throw new Error(`unknown command: ${command ?? "(missing)"}`);
+  }
+}
+
+async function commandNotify(argv: string[]): Promise<void> {
+  const config = await loadIdentity(root);
+  const lane = parseLaneId(optionValue(argv, "--lane") ?? config.defaultLane);
+  const stateFile = optionValue(argv, "--state-file");
+  const result = await notify({
+    lane,
+    root,
+    json: argv.includes("--json"),
+    peek: argv.includes("--peek"),
+    exitCode: argv.includes("--exit-code"),
+    ...(stateFile === undefined ? {} : { stateFile }),
+  });
+  if (argv.includes("--json")) {
+    print(result);
+  } else if (result.wakeRequests.length === 0) {
+    console.log(`ledger-notify: lane=${lane} no wake requests`);
+  } else {
+    for (const request of result.wakeRequests) {
+      console.log(`${request.severity.toUpperCase()} ${request.reason} ${request.sourceLane}: ${request.summary}`);
+    }
+  }
+  if (argv.includes("--exit-code") && result.wakeRequests.length > 0) {
+    process.exit(2);
   }
 }
 

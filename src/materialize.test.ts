@@ -12,12 +12,14 @@ import {
   parseTaskState,
   parseStatusState,
   parseUserText,
+  parseWorkerState,
   writerId,
 } from "./domain.js";
 import { inspectLedger } from "./doctor.js";
 import { guardLedger } from "./guard.js";
 import { initIdentity } from "./identity.js";
 import { materialize } from "./materialize.js";
+import { collectWakeRequests, notify } from "./notify.js";
 import { addPeer, loadPeerRegistry, resolvePeer } from "./peers.js";
 import { compactLedger } from "./retention.js";
 import { defaultLedgerRoot, resolveLedgerRoot } from "./root.js";
@@ -178,6 +180,85 @@ describe("Ocentra Parent Hub ledger", () => {
     const state = await materialize(root);
     expect(state.lanes.get(parseLaneId("codex-b"))?.inbox).toHaveLength(1);
     expect(state.lanes.get(config.defaultLane)?.inbox).toHaveLength(0);
+  });
+
+  it("detects lane inbox wake requests without waking other lanes", async () => {
+    const root = await tempRoot();
+    const config = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-boss",
+      nodeName: "BOSS",
+    });
+    await appendEvent(root, config, config.defaultLane, {
+      type: "message",
+      to: parseMessageAddress("codex-b"),
+      body: parseUserText("Review package gate\n\nDetails"),
+    });
+
+    const state = await materialize(root);
+    expect(collectWakeRequests(state, parseLaneId("codex-b"))).toMatchObject([
+      {
+        targetLane: "codex-b",
+        sourceLane: "primary",
+        reason: "inbox",
+        severity: "normal",
+        summary: "Review package gate",
+      },
+    ]);
+    expect(collectWakeRequests(state, parseLaneId("codex-c"))).toEqual([]);
+  });
+
+  it("detects primary wake requests for worker handoff reports", async () => {
+    const root = await tempRoot();
+    const config = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "codex-b",
+      nodeId: "node-b",
+      nodeName: "B",
+    });
+    await appendEvent(root, config, config.defaultLane, {
+      type: "worker.update",
+      workerState: parseWorkerState("working"),
+      summary: parseUserText("PR_READY #123\n\nValidated locally"),
+    });
+
+    const requests = collectWakeRequests(await materialize(root), parseLaneId("primary"));
+    expect(requests).toMatchObject([
+      {
+        targetLane: "primary",
+        sourceLane: "codex-b",
+        reason: "pr-ready",
+        severity: "normal",
+        summary: "PR_READY #123",
+      },
+    ]);
+  });
+
+  it("dedupes notify wake requests through external state", async () => {
+    const root = await tempRoot();
+    const config = await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-boss",
+      nodeName: "BOSS",
+    });
+    await appendEvent(root, config, config.defaultLane, {
+      type: "message",
+      to: parseMessageAddress("codex-d"),
+      body: parseUserText("Need D review"),
+    });
+
+    const first = await notify({ root, lane: parseLaneId("codex-d") });
+    const second = await notify({ root, lane: parseLaneId("codex-d") });
+    const peek = await notify({ root, lane: parseLaneId("codex-d"), peek: true });
+
+    expect(first.wakeRequests).toHaveLength(1);
+    expect(second.wakeRequests).toHaveLength(0);
+    expect(peek.wakeRequests).toHaveLength(0);
   });
 
   it("guards worker lanes against unread mail and unclaimed changed paths", async () => {
