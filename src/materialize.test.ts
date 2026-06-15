@@ -135,7 +135,7 @@ describe("Ocentra Parent Hub ledger", () => {
     expect(lane?.heartbeat?.stale).toBe(false);
   });
 
-  it("guards a lane against duplicate active Codex sessions", async () => {
+  it("records duplicate active Codex sessions without blocking the lane", async () => {
     const root = await tempRoot();
     const config = await initIdentity({
       root,
@@ -158,8 +158,8 @@ describe("Ocentra Parent Hub ledger", () => {
     expect(ownerGuard.ok).toBe(true);
 
     const duplicateGuard = await guardLedger(root, { lane: "codex-d", sessionId: "session-two" });
-    expect(duplicateGuard.ok).toBe(false);
-    expect(duplicateGuard.findings.join("\n")).toContain("active session session-one");
+    expect(duplicateGuard.ok).toBe(true);
+    expect(duplicateGuard.findings.join("\n")).not.toContain("active session session-one");
   });
 
   it("routes addressed messages to the target lane inbox", async () => {

@@ -1,7 +1,7 @@
 import { LaneId, parseLaneId } from "./domain.js";
 import { inspectLedger, LedgerDiagnostic } from "./doctor.js";
 import { ClaimView, materialize } from "./materialize.js";
-import { MAX_CLAIM_PATHS, isFolderLikeClaimPath } from "./claim-policy.js";
+import { isFolderLikeClaimPath } from "./claim-policy.js";
 
 export type GuardResult = {
   readonly ok: boolean;
@@ -24,10 +24,6 @@ export async function guardLedger(
   const inspection = await inspectLedger(root);
   const findings: string[] = [];
   const laneView = state.lanes.get(lane);
-  const activeSession = state.sessions.get(lane);
-  if (input.sessionId !== undefined && activeSession !== undefined && activeSession.sessionId !== input.sessionId) {
-    findings.push(`lane ${lane} is owned by active session ${activeSession.sessionId}`);
-  }
   const unread = laneView?.inbox.filter((item) => item.ackedBy.length === 0) ?? [];
   if (lane !== "primary" && unread.length > 0) {
     findings.push(`lane ${lane} has ${unread.length} unread ledger message(s)`);
@@ -58,9 +54,6 @@ export async function guardLedger(
         findings.push(`lane ${lane} has non-exact claim path ${path}; claims must be exact files`);
       }
     }
-  }
-  if (state.ownership.activeClaims.filter((claim) => claim.lane === lane).length > MAX_CLAIM_PATHS) {
-    findings.push(`lane ${lane} has more than ${MAX_CLAIM_PATHS} active ledger claims`);
   }
 
   for (const diagnostic of inspection.diagnostics) {
