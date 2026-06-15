@@ -30,6 +30,11 @@ export async function normalizeClaimPaths(root: string, rawPaths: readonly strin
     if (!isExactClaimPathCandidate(path)) {
       throw new Error(`claim paths must be exact files, not folders or globs: ${path}`);
     }
+    if (await isGitLink(root, path)) {
+      seen.add(path);
+      normalized.push(parseClaimPath(path));
+      continue;
+    }
     if (await isExistingDirectory(root, path)) {
       throw new Error(`claim paths must be exact files, not folders: ${path}`);
     }
@@ -47,6 +52,9 @@ export async function isFolderLikeClaimPath(root: string, path: string): Promise
   const normalized = normalizeClaimPathInput(path);
   if (!isExactClaimPathCandidate(normalized)) {
     return true;
+  }
+  if (await isGitLink(root, normalized)) {
+    return false;
   }
   if (await isExistingDirectory(root, normalized)) {
     return true;
@@ -87,6 +95,23 @@ async function isExistingDirectory(root: string, path: string): Promise<boolean>
   } catch {
     return false;
   }
+}
+
+async function isGitLink(root: string, path: string): Promise<boolean> {
+  const result = spawnSync(
+    "git",
+    ["ls-files", "--stage", "--", path],
+    {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    },
+  );
+  if ((result.status ?? 1) !== 0) {
+    return false;
+  }
+  return result.stdout.split(/\r?\n/u).some((line) => line.startsWith("160000 "));
 }
 
 async function hasKnownDescendants(root: string, path: string): Promise<boolean> {

@@ -265,7 +265,7 @@ async function commandNote(argv: string[]): Promise<void> {
 
 async function commandClaim(argv: string[]): Promise<void> {
   const laneRaw = argv[0];
-  const pathArgs = argv.slice(1).filter((arg) => !arg.startsWith("--")).flatMap((value) => splitPathList(value));
+  const pathArgs = positionalArgs(argv, ["--reason"]).flatMap((value) => splitPathList(value));
   if (laneRaw === undefined || pathArgs.length === 0) {
     throw new Error("usage: ledger claim <lane> <path> [<path> ...] [--reason <reason>]");
   }
@@ -281,7 +281,7 @@ async function commandClaim(argv: string[]): Promise<void> {
 
 async function commandRelease(argv: string[]): Promise<void> {
   const laneRaw = argv[0];
-  const pathArgs = argv.slice(1).filter((arg) => !arg.startsWith("--")).flatMap((value) => splitPathList(value));
+  const pathArgs = positionalArgs(argv, []);
   if (laneRaw === undefined || pathArgs.length === 0) {
     throw new Error("usage: ledger release <lane> <path> [<path> ...]");
   }
@@ -295,7 +295,7 @@ async function commandRelease(argv: string[]): Promise<void> {
 
 async function commandResolve(argv: string[]): Promise<void> {
   const laneRaw = argv[0];
-  const pathArgs = argv.slice(1).filter((arg) => !arg.startsWith("--")).flatMap((value) => splitPathList(value));
+  const pathArgs = positionalArgs(argv, ["--owner"]);
   if (laneRaw === undefined || pathArgs.length === 0) {
     throw new Error("usage: ledger resolve <lane> <path> [<path> ...] [--owner <writer>]");
   }
@@ -610,6 +610,28 @@ function splitPathList(value: string): readonly string[] {
     .split(/[,\n]/u)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+function positionalArgs(argv: readonly string[], optionsWithValues: readonly string[]): readonly string[] {
+  const values: string[] = [];
+  for (let index = 1; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === undefined) {
+      continue;
+    }
+    if (arg === "--") {
+      continue;
+    }
+    if (optionsWithValues.includes(arg)) {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--")) {
+      continue;
+    }
+    values.push(arg);
+  }
+  return values;
 }
 
 function isHttpPeer(peer: string): boolean {
