@@ -16,6 +16,7 @@ import {
   parseWriterId,
 } from "./domain.js";
 import { loadIdentity, resolveLane } from "./identity.js";
+import { normalizeClaimPathInput, normalizeClaimPaths } from "./claim-policy.js";
 import { getActiveTasks, getFreeWorkers, getWorkers, materialize, materializedToJson } from "./materialize.js";
 import { streamsDir } from "./paths.js";
 import { appendEvent } from "./stream.js";
@@ -241,27 +242,60 @@ async function routeCommand(
   if (command === "claim") {
     const lane = parseLaneId(requiredString(body, "lane"));
     const reason = optionalString(body, "reason");
+    const rawPaths = optionalString(body, "path") !== undefined
+      ? [requiredString(body, "path")]
+      : Array.isArray(body.paths)
+        ? body.paths.map((value) => {
+          if (typeof value !== "string" || value.length === 0) {
+            throw new Error("paths entries must be non-empty strings");
+          }
+          return value;
+        })
+        : [];
+    const paths = await normalizeClaimPaths(root, rawPaths);
     const event = await appendEvent(root, config, lane, {
       type: "claim",
-      paths: [parseClaimPath(requiredString(body, "path"))],
+      paths,
       ...(reason === undefined ? {} : { reason: parseUserText(reason) }),
     });
     sendJson(response, 200, { event });
     return;
   }
   if (command === "release") {
+    const rawPaths = optionalString(body, "path") !== undefined
+      ? [requiredString(body, "path")]
+      : Array.isArray(body.paths)
+        ? body.paths.map((value) => {
+          if (typeof value !== "string" || value.length === 0) {
+            throw new Error("paths entries must be non-empty strings");
+          }
+          return value;
+        })
+        : [];
+    const paths = rawPaths.map((path) => parseClaimPath(normalizeClaimPathInput(path)));
     const event = await appendEvent(root, config, parseLaneId(requiredString(body, "lane")), {
       type: "release",
-      paths: [parseClaimPath(requiredString(body, "path"))],
+      paths,
     });
     sendJson(response, 200, { event });
     return;
   }
   if (command === "resolve") {
     const owner = optionalString(body, "owner");
+    const rawPaths = optionalString(body, "path") !== undefined
+      ? [requiredString(body, "path")]
+      : Array.isArray(body.paths)
+        ? body.paths.map((value) => {
+          if (typeof value !== "string" || value.length === 0) {
+            throw new Error("paths entries must be non-empty strings");
+          }
+          return value;
+        })
+        : [];
+    const paths = rawPaths.map((path) => parseClaimPath(normalizeClaimPathInput(path)));
     const event = await appendEvent(root, config, parseLaneId(requiredString(body, "lane")), {
       type: "claim.resolve",
-      paths: [parseClaimPath(requiredString(body, "path"))],
+      paths,
       ...(owner === undefined ? {} : { owner: parseWriterId(owner) }),
     });
     sendJson(response, 200, { event });

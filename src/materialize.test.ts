@@ -296,7 +296,7 @@ describe("Ocentra Parent Hub ledger", () => {
 
     await appendEvent(root, config, parseLaneId("codex-b"), {
       type: "claim",
-      paths: [parseClaimPath("src/auth/**")],
+      paths: [parseClaimPath("src/auth/login.ts")],
     });
     const passed = await guardLedger(root, {
       lane: "codex-b",
@@ -391,7 +391,7 @@ describe("Ocentra Parent Hub ledger", () => {
 
     await appendEvent(hp, hpConfig, hpConfig.defaultLane, {
       type: "claim",
-      paths: [parseClaimPath("src/auth/**")],
+      paths: [parseClaimPath("src/auth/login.ts")],
       reason: parseUserText("auth cleanup"),
     });
     await appendEvent(gamedev, gamedevConfig, gamedevConfig.defaultLane, {
@@ -416,7 +416,7 @@ describe("Ocentra Parent Hub ledger", () => {
     });
     await appendEvent(root, hpConfig, hpConfig.defaultLane, {
       type: "claim",
-      paths: [parseClaimPath("src/auth/**")],
+      paths: [parseClaimPath("src/auth/login.ts")],
     });
     await appendEvent(root, hpConfig, parseLaneId("codex-c"), {
       type: "claim",

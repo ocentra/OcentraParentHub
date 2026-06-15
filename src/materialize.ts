@@ -594,12 +594,11 @@ function overlappingPaths(left: readonly ClaimPath[], right: readonly ClaimPath[
 }
 
 function pathsOverlap(left: string, right: string): boolean {
-  if (left === right) {
-    return true;
-  }
-  const leftPrefix = left.replace(/\*\*?$/u, "");
-  const rightPrefix = right.replace(/\*\*?$/u, "");
-  return left.startsWith(rightPrefix) || right.startsWith(leftPrefix);
+  return normalizeClaimPath(left) === normalizeClaimPath(right);
+}
+
+function normalizeClaimPath(path: string): string {
+  return path.replace(/\\/gu, "/").replace(/\/+/gu, "/").replace(/^\.\//u, "").toLowerCase();
 }
 
 async function writeViews(root: string, state: MaterializedHub): Promise<void> {

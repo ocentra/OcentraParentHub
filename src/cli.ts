@@ -28,6 +28,7 @@ import { compactLedger } from "./retention.js";
 import { resolveLedgerRoot } from "./root.js";
 import { startPeerServer } from "./server.js";
 import { appendEvent } from "./stream.js";
+import { normalizeClaimPathInput, normalizeClaimPaths } from "./claim-policy.js";
 import { syncFromHttpPeer } from "./sync/http.js";
 import { syncFromPeer } from "./sync/local.js";
 
@@ -263,41 +264,47 @@ async function commandNote(argv: string[]): Promise<void> {
 }
 
 async function commandClaim(argv: string[]): Promise<void> {
-  const [laneRaw, pathRaw] = argv;
-  if (laneRaw === undefined || pathRaw === undefined) {
-    throw new Error("usage: ledger claim <lane> <path> [--reason <reason>]");
+  const laneRaw = argv[0];
+  const pathArgs = argv.slice(1).filter((arg) => !arg.startsWith("--")).flatMap((value) => splitPathList(value));
+  if (laneRaw === undefined || pathArgs.length === 0) {
+    throw new Error("usage: ledger claim <lane> <path> [<path> ...] [--reason <reason>]");
   }
   const config = await loadIdentity(root);
   const reason = optionValue(argv, "--reason");
+  const paths = await normalizeClaimPaths(root, pathArgs);
   print(await appendEvent(root, config, parseLaneId(laneRaw), {
     type: "claim",
-    paths: [parseClaimPath(pathRaw)],
+    paths,
     ...(reason === undefined ? {} : { reason: parseUserText(reason) }),
   }));
 }
 
 async function commandRelease(argv: string[]): Promise<void> {
-  const [laneRaw, pathRaw] = argv;
-  if (laneRaw === undefined || pathRaw === undefined) {
-    throw new Error("usage: ledger release <lane> <path>");
+  const laneRaw = argv[0];
+  const pathArgs = argv.slice(1).filter((arg) => !arg.startsWith("--")).flatMap((value) => splitPathList(value));
+  if (laneRaw === undefined || pathArgs.length === 0) {
+    throw new Error("usage: ledger release <lane> <path> [<path> ...]");
   }
   const config = await loadIdentity(root);
+  const paths = pathArgs.map((path) => parseClaimPath(normalizeClaimPathInput(path)));
   print(await appendEvent(root, config, parseLaneId(laneRaw), {
     type: "release",
-    paths: [parseClaimPath(pathRaw)],
+    paths,
   }));
 }
 
 async function commandResolve(argv: string[]): Promise<void> {
-  const [laneRaw, pathRaw] = argv;
-  if (laneRaw === undefined || pathRaw === undefined) {
-    throw new Error("usage: ledger resolve <lane> <path> [--owner <writer>]");
+  const laneRaw = argv[0];
+  const pathArgs = argv.slice(1).filter((arg) => !arg.startsWith("--")).flatMap((value) => splitPathList(value));
+  if (laneRaw === undefined || pathArgs.length === 0) {
+    throw new Error("usage: ledger resolve <lane> <path> [<path> ...] [--owner <writer>]");
   }
   const config = await loadIdentity(root);
   const owner = optionValue(argv, "--owner");
+  const paths = pathArgs.map((path) => parseClaimPath(normalizeClaimPathInput(path)));
   print(await appendEvent(root, config, parseLaneId(laneRaw), {
     type: "claim.resolve",
-    paths: [parseClaimPath(pathRaw)],
+    paths,
     ...(owner === undefined ? {} : { owner: parseWriterId(owner) }),
   }));
 }

@@ -1,6 +1,7 @@
 import { LaneId, parseLaneId } from "./domain.js";
 import { inspectLedger, LedgerDiagnostic } from "./doctor.js";
 import { ClaimView, materialize } from "./materialize.js";
+import { MAX_CLAIM_PATHS, isFolderLikeClaimPath } from "./claim-policy.js";
 
 export type GuardResult = {
   readonly ok: boolean;
@@ -51,6 +52,17 @@ export async function guardLedger(
     }
   }
 
+  for (const claim of state.ownership.activeClaims.filter((item) => item.lane === lane)) {
+    for (const path of claim.paths) {
+      if (await isFolderLikeClaimPath(root, String(path))) {
+        findings.push(`lane ${lane} has non-exact claim path ${path}; claims must be exact files`);
+      }
+    }
+  }
+  if (state.ownership.activeClaims.filter((claim) => claim.lane === lane).length > MAX_CLAIM_PATHS) {
+    findings.push(`lane ${lane} has more than ${MAX_CLAIM_PATHS} active ledger claims`);
+  }
+
   for (const diagnostic of inspection.diagnostics) {
     if (diagnostic.level === "error") {
       findings.push(`${diagnostic.stream}: ${diagnostic.message}`);
@@ -70,15 +82,7 @@ function claimMatchesPath(claim: ClaimView, path: string): boolean {
 }
 
 function pathMatchesClaim(path: string, claimPath: string): boolean {
-  if (claimPath.includes("*")) {
-    return wildcardToRegExp(claimPath).test(path);
-  }
-  return path === claimPath || path.startsWith(`${claimPath}/`);
-}
-
-function wildcardToRegExp(pattern: string): RegExp {
-  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/gu, "\\$&").replace(/\*/gu, ".*");
-  return new RegExp(`^${escaped}$`, "u");
+  return path === claimPath;
 }
 
 function normalizeRepoPath(path: string): string {
