@@ -263,41 +263,44 @@ async function commandNote(argv: string[]): Promise<void> {
 }
 
 async function commandClaim(argv: string[]): Promise<void> {
-  const [laneRaw, pathRaw] = argv;
-  if (laneRaw === undefined || pathRaw === undefined) {
-    throw new Error("usage: ledger claim <lane> <path> [--reason <reason>]");
+  const [laneRaw, ...rest] = argv;
+  const paths = positionalArgs(rest, ["--reason"]).map((path) => parseClaimPath(path));
+  if (laneRaw === undefined || paths.length === 0) {
+    throw new Error("usage: ledger claim <lane> <path> [more paths...] [--reason <reason>]");
   }
   const config = await loadIdentity(root);
   const reason = optionValue(argv, "--reason");
   print(await appendEvent(root, config, parseLaneId(laneRaw), {
     type: "claim",
-    paths: [parseClaimPath(pathRaw)],
+    paths,
     ...(reason === undefined ? {} : { reason: parseUserText(reason) }),
   }));
 }
 
 async function commandRelease(argv: string[]): Promise<void> {
-  const [laneRaw, pathRaw] = argv;
-  if (laneRaw === undefined || pathRaw === undefined) {
-    throw new Error("usage: ledger release <lane> <path>");
+  const [laneRaw, ...rest] = argv;
+  const paths = positionalArgs(rest, []);
+  if (laneRaw === undefined || paths.length === 0) {
+    throw new Error("usage: ledger release <lane> <path> [more paths...]");
   }
   const config = await loadIdentity(root);
   print(await appendEvent(root, config, parseLaneId(laneRaw), {
     type: "release",
-    paths: [parseClaimPath(pathRaw)],
+    paths: paths.map((path) => parseClaimPath(path)),
   }));
 }
 
 async function commandResolve(argv: string[]): Promise<void> {
-  const [laneRaw, pathRaw] = argv;
-  if (laneRaw === undefined || pathRaw === undefined) {
-    throw new Error("usage: ledger resolve <lane> <path> [--owner <writer>]");
+  const [laneRaw, ...rest] = argv;
+  const paths = positionalArgs(rest, ["--owner"]).map((path) => parseClaimPath(path));
+  if (laneRaw === undefined || paths.length === 0) {
+    throw new Error("usage: ledger resolve <lane> <path> [more paths...] [--owner <writer>]");
   }
   const config = await loadIdentity(root);
   const owner = optionValue(argv, "--owner");
   print(await appendEvent(root, config, parseLaneId(laneRaw), {
     type: "claim.resolve",
-    paths: [parseClaimPath(pathRaw)],
+    paths,
     ...(owner === undefined ? {} : { owner: parseWriterId(owner) }),
   }));
 }
@@ -581,6 +584,24 @@ function firstPositional(argv: readonly string[], optionsWithValues: readonly st
     }
   }
   return undefined;
+}
+
+function positionalArgs(argv: readonly string[], optionsWithValues: readonly string[]): string[] {
+  const positional: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === undefined) {
+      continue;
+    }
+    if (optionsWithValues.includes(arg)) {
+      index += 1;
+      continue;
+    }
+    if (!arg.startsWith("--")) {
+      positional.push(arg);
+    }
+  }
+  return positional;
 }
 
 function summaryWithoutOptions(parts: readonly string[]): string {

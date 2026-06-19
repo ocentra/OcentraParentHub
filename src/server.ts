@@ -243,7 +243,7 @@ async function routeCommand(
     const reason = optionalString(body, "reason");
     const event = await appendEvent(root, config, lane, {
       type: "claim",
-      paths: [parseClaimPath(requiredString(body, "path"))],
+      paths: requiredClaimPaths(body),
       ...(reason === undefined ? {} : { reason: parseUserText(reason) }),
     });
     sendJson(response, 200, { event });
@@ -252,7 +252,7 @@ async function routeCommand(
   if (command === "release") {
     const event = await appendEvent(root, config, parseLaneId(requiredString(body, "lane")), {
       type: "release",
-      paths: [parseClaimPath(requiredString(body, "path"))],
+      paths: requiredClaimPaths(body),
     });
     sendJson(response, 200, { event });
     return;
@@ -261,7 +261,7 @@ async function routeCommand(
     const owner = optionalString(body, "owner");
     const event = await appendEvent(root, config, parseLaneId(requiredString(body, "lane")), {
       type: "claim.resolve",
-      paths: [parseClaimPath(requiredString(body, "path"))],
+      paths: requiredClaimPaths(body),
       ...(owner === undefined ? {} : { owner: parseWriterId(owner) }),
     });
     sendJson(response, 200, { event });
@@ -318,6 +318,22 @@ function optionalNumber(body: Record<string, unknown>, key: string): number | un
     throw new Error(`${key} must be a finite number`);
   }
   return value;
+}
+
+function requiredClaimPaths(body: Record<string, unknown>): ReturnType<typeof parseClaimPath>[] {
+  const rawPaths = body.paths;
+  if (rawPaths !== undefined) {
+    if (!Array.isArray(rawPaths) || rawPaths.length === 0) {
+      throw new Error("paths must be a non-empty string array");
+    }
+    return rawPaths.map((value) => {
+      if (typeof value !== "string" || value.length === 0) {
+        throw new Error("paths entries must be non-empty strings");
+      }
+      return parseClaimPath(value);
+    });
+  }
+  return [parseClaimPath(requiredString(body, "path"))];
 }
 
 function isAuthorized(request: IncomingMessage, token: string): boolean {

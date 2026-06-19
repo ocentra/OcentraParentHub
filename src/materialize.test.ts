@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -22,7 +22,7 @@ import { materialize } from "./materialize.js";
 import { collectWakeRequests, notify } from "./notify.js";
 import { addPeer, loadPeerRegistry, resolvePeer } from "./peers.js";
 import { compactLedger } from "./retention.js";
-import { defaultLedgerRoot, resolveLedgerRoot } from "./root.js";
+import { resolveLedgerRoot } from "./root.js";
 import { streamPath } from "./paths.js";
 import { startPeerServer } from "./server.js";
 import { appendEvent } from "./stream.js";
@@ -33,7 +33,7 @@ import { spawnSync } from "node:child_process";
 describe("Ocentra Parent Hub ledger", () => {
   it("keeps default ledger state outside the code checkout", () => {
     const explicitRoot = join(tmpdir(), "ledger-state");
-    expect(resolveLedgerRoot({})).toBe(defaultLedgerRoot());
+    expect(resolveLedgerRoot({})).toBe(join(homedir(), ".ocentra", "ledger", "ocentra-parent"));
     expect(resolveLedgerRoot({ LEDGER_ROOT: explicitRoot })).toBe(explicitRoot);
   });
 
@@ -371,6 +371,60 @@ describe("Ocentra Parent Hub ledger", () => {
     expect(workerRead.ok).toBe(true);
   });
 
+  it("claims and releases multiple exact paths through the CLI", async () => {
+    const root = await tempRoot();
+    await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-boss",
+      nodeName: "BOSS",
+    });
+
+    const claimResult = spawnSync(process.execPath, [
+      "--import",
+      "tsx",
+      "src/cli.ts",
+      "claim",
+      "codex-b",
+      "src/auth/login.ts",
+      "src/auth/session.ts",
+      "--reason",
+      "multi-path cli claim",
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, LEDGER_ROOT: root },
+    });
+    expect(claimResult.stderr).toBe("");
+    expect(claimResult.status).toBe(0);
+
+    let state = await materialize(root);
+    expect(state.ownership.activeClaims.map((claim) => claim.paths[0]).sort()).toEqual([
+      "src/auth/login.ts",
+      "src/auth/session.ts",
+    ]);
+
+    const releaseResult = spawnSync(process.execPath, [
+      "--import",
+      "tsx",
+      "src/cli.ts",
+      "release",
+      "codex-b",
+      "src/auth/login.ts",
+      "src/auth/session.ts",
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, LEDGER_ROOT: root },
+    });
+    expect(releaseResult.stderr).toBe("");
+    expect(releaseResult.status).toBe(0);
+
+    state = await materialize(root);
+    expect(state.ownership.activeClaims).toHaveLength(0);
+  });
+
   it("detects overlapping ownership conflicts after local sync", async () => {
     const hp = await tempRoot();
     const gamedev = await tempRoot();
@@ -684,6 +738,42 @@ describe("Ocentra Parent Hub ledger", () => {
       expect(workers.workers?.[0]?.state).toBe("progress");
       expect(free.workers).toHaveLength(0);
       expect(active.tasks?.[0]?.taskId).toBe("task-1");
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("accepts multi-path claim and release commands over HTTP", async () => {
+    const root = await tempRoot();
+    await initIdentity({
+      root,
+      hub: "ocentra-parent",
+      lane: "primary",
+      nodeId: "node-boss",
+      nodeName: "BOSS",
+    });
+
+    const server = await startPeerServer(root, 0);
+    try {
+      await postJson(new URL("/commands/claim", server.url), {
+        lane: "codex-b",
+        paths: ["src/auth/login.ts", "src/auth/session.ts"],
+        reason: "multi-path http claim",
+      });
+
+      let state = await materialize(root);
+      expect(state.ownership.activeClaims.map((claim) => claim.paths[0]).sort()).toEqual([
+        "src/auth/login.ts",
+        "src/auth/session.ts",
+      ]);
+
+      await postJson(new URL("/commands/release", server.url), {
+        lane: "codex-b",
+        paths: ["src/auth/login.ts", "src/auth/session.ts"],
+      });
+
+      state = await materialize(root);
+      expect(state.ownership.activeClaims).toHaveLength(0);
     } finally {
       await server.close();
     }
